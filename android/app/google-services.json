@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "20011491040",
+    "project_id": "aktyres-billbook",
+    "storage_bucket": "aktyres-billbook.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:20011491040:android:dad2a88c1094f4abc7ba85",
+        "android_client_info": {
+          "package_name": "Aktyres9333_bill.book"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "20011491040-qbtk20esa16ovkvb7jomc77k9ap9n8vo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAiQ4XrleDCjgmlKJkCW55_q1CreUMJfNM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "20011491040-qbtk20esa16ovkvb7jomc77k9ap9n8vo.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,190 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; color: #333; }
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Navbar */
+.navbar {
+  background: #1a1a2e; color: white; padding: 12px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.navbar-brand { display: flex; align-items: center; gap: 8px; font-size: 1.2rem; font-weight: bold; }
+.brand-icon { font-size: 1.5rem; }
+.navbar-links { display: flex; gap: 6px; flex-wrap: wrap; }
+.nav-btn {
+  background: transparent; border: 1px solid rgba(255,255,255,0.2); color: white;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+  transition: all 0.2s;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.1); }
+.nav-btn.active { background: #e94560; border-color: #e94560; }
+
+/* Main content */
+.main-content { flex: 1; padding: 20px; max-width: 1200px; margin: 0 auto; width: 100%; }
+
+/* Page */
+.page { display: flex; flex-direction: column; gap: 16px; }
+.page h1 { font-size: 1.5rem; color: #1a1a2e; }
+.page-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+
+/* Stats grid */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat-card {
+  background: white; border-radius: 10px; padding: 16px; text-align: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.stat-card.warning { border-left: 4px solid #e94560; }
+.stat-value { font-size: 1.5rem; font-weight: bold; color: #1a1a2e; }
+.stat-label { font-size: 0.85rem; color: #666; margin-top: 4px; }
+
+/* Alert section */
+.alert-section { background: #fff3cd; border-radius: 10px; padding: 16px; }
+.alert-section h2 { font-size: 1.1rem; margin-bottom: 8px; }
+.alert-section ul { padding-left: 20px; }
+.alert-section li { margin: 4px 0; }
+
+/* Quick actions */
+.quick-actions .action-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.quick-actions button, .btn-primary {
+  background: #e94560; color: white; border: none; padding: 10px 16px;
+  border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 500;
+}
+.quick-actions button:hover, .btn-primary:hover { background: #c73650; }
+.btn-danger { background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.btn-danger:hover { background: #c82333; }
+.btn-sm { padding: 4px 8px; font-size: 0.8rem; }
+
+/* Recent bills */
+.recent-bills .bill-row {
+  display: flex; justify-content: space-between; padding: 10px; background: white;
+  border-radius: 8px; margin: 6px 0; cursor: pointer; gap: 10px; flex-wrap: wrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.recent-bills .bill-row:hover { background: #f8f9fa; }
+.status { padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
+.status.paid { background: #d4edda; color: #155724; }
+.status.unpaid { background: #f8d7da; color: #721c24; }
+.status.partial { background: #fff3cd; color: #856404; }
+
+/* Inventory */
+.tyre-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.tyre-card {
+  background: white; border-radius: 10px; padding: 16px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08); position: relative;
+}
+.tyre-card.low-stock { border-left: 4px solid #e94560; }
+.tyre-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tyre-size { background: #e9ecef; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; }
+.tyre-details { display: flex; flex-direction: column; gap: 2px; font-size: 0.9rem; color: #555; }
+.tyre-stock { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.stock-qty { font-weight: bold; }
+.stock-actions { display: flex; gap: 6px; }
+.stock-actions button { width: 32px; height: 32px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 1rem; }
+.stock-actions button:hover { background: #f0f0f0; }
+.low-stock-badge { position: absolute; top: 8px; right: 8px; font-size: 0.75rem; }
+.tyre-actions { margin-top: 10px; display: flex; justify-content: flex-end; }
+
+/* Forms */
+.form { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.form-row label { font-size: 0.9rem; font-weight: 500; color: #555; }
+.form-row input, .form-row select, .form-row textarea {
+  padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem;
+}
+.form-row textarea { min-height: 80px; resize: vertical; }
+.form-actions { display: flex; gap: 10px; margin-top: 16px; }
+.form-actions button { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; }
+.form-actions button:first-child { background: #e94560; color: white; }
+.form-actions button:last-child { background: #e9ecef; color: #333; }
+
+/* Search */
+.search-input {
+  width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px;
+  font-size: 1rem; margin-bottom: 12px;
+}
+
+/* Dropdown */
+.dropdown { background: white; border: 1px solid #ddd; border-radius: 8px; max-height: 200px; overflow-y: auto; margin-bottom: 12px; }
+.dropdown-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+.dropdown-item:hover { background: #f8f9fa; }
+
+/* Filter bar */
+.filter-bar { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-bar button { padding: 6px 14px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; }
+.filter-bar button.active { background: #1a1a2e; color: white; border-color: #1a1a2e; }
+
+/* Bill cards */
+.bill-list { display: flex; flex-direction: column; gap: 8px; }
+.bill-card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); cursor: pointer; }
+.bill-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.bill-card-header { display: flex; justify-content: space-between; align-items: center; }
+.bill-card-body { display: flex; gap: 12px; margin: 6px 0; font-size: 0.9rem; color: #555; flex-wrap: wrap; }
+.bill-card-footer { display: flex; justify-content: space-between; font-weight: 500; }
+.balance { color: #e94560; }
+.status-badge { padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; }
+.status-badge.paid { background: #d4edda; color: #155724; }
+.status-badge.unpaid { background: #f8d7da; color: #721c24; }
+.status-badge.partial { background: #fff3cd; color: #856404; }
+
+/* Items table */
+.items-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.items-table th, .items-table td { padding: 8px; border-bottom: 1px solid #eee; text-align: left; }
+.items-table th { background: #f8f9fa; font-weight: 600; }
+.bill-totals { text-align: right; padding: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* Selected item */
+.selected-item { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+
+/* Scan */
+.scan-type-selector { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+.scan-upload-btn {
+  display: inline-block; background: #1a1a2e; color: white; padding: 14px 24px;
+  border-radius: 10px; cursor: pointer; font-size: 1rem; text-align: center;
+}
+.scan-upload-btn:hover { background: #2a2a4e; }
+.scan-result { background: white; border-radius: 10px; padding: 16px; }
+.raw-text { background: #f8f9fa; padding: 10px; border-radius: 6px; font-size: 0.8rem; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.scan-actions { display: flex; gap: 10px; margin-top: 12px; }
+
+/* Chatbot */
+.chat-container { background: white; border-radius: 10px; padding: 16px; }
+.chat-messages { max-height: 400px; overflow-y: auto; margin-bottom: 12px; }
+.chat-msg { display: flex; gap: 8px; margin: 8px 0; align-items: flex-start; }
+.chat-msg.bot { }
+.chat-msg.user { flex-direction: row-reverse; }
+.chat-avatar { font-size: 1.2rem; }
+.chat-text { background: #f0f2f5; padding: 8px 12px; border-radius: 12px; max-width: 80%; }
+.chat-msg.user .chat-text { background: #e94560; color: white; }
+.chat-input { display: flex; gap: 8px; }
+.chat-input input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+.chat-input button { padding: 10px 20px; background: #e94560; color: white; border: none; border-radius: 8px; cursor: pointer; }
+.chat-examples { margin-top: 16px; }
+.chat-examples ul { padding-left: 20px; }
+.chat-examples li { margin: 4px 0; font-size: 0.9rem; color: #555; }
+
+/* Parties */
+.party-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.party-card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.party-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.type-badge { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
+.type-badge.customer { background: #d1ecf1; color: #0c5460; }
+.type-badge.dealer { background: #d4edda; color: #155724; }
+.party-body { display: flex; flex-direction: column; gap: 2px; font-size: 0.9rem; color: #555; }
+
+/* Payment list */
+.payment-list { display: flex; flex-direction: column; gap: 8px; }
+.payment-card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.payment-header { display: flex; justify-content: space-between; font-weight: 600; }
+.payment-body { display: flex; gap: 12px; margin-top: 6px; font-size: 0.9rem; color: #555; flex-wrap: wrap; }
+
+/* Empty state */
+.empty-state { text-align: center; color: #888; padding: 40px; font-size: 1.1rem; }
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .navbar { flex-direction: column; align-items: flex-start; }
+  .navbar-links { width: 100%; overflow-x: auto; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .tyre-grid, .party-list { grid-template-columns: 1fr; }
+}

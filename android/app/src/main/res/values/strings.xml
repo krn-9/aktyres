@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tyre Shop</string>
+    <string name="title_activity_main">Tyre Shop</string>
+    <string name="package_name">Aktyres9333_bill.book</string>
+    <string name="custom_url_scheme">Aktyres9333_bill.book</string>
+</resources>
