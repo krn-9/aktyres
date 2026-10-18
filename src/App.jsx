@@ -57,8 +57,16 @@ export default function App() {
   }
 
   const renderPage = () => {
+    if (route.startsWith('/bills/edit/')) {
+      const editId = route.replace('/bills/edit/', '');
+      const existingBill = BillService.getById(editId);
+      return <BillForm navigate={navigate} type={existingBill?.type || 'sale'} editId={editId} />;
+    }
     if (route.startsWith('/bills/') && route !== '/bills/new' && route !== '/bills/purchase') {
       return <BillDetail navigate={navigate} billId={route.replace('/bills/', '')} />;
+    }
+    if (route.startsWith('/inventory/edit/')) {
+      return <TyreForm navigate={navigate} editId={route.replace('/inventory/edit/', '')} />;
     }
     switch (route) {
       case '/': return <Dashboard navigate={navigate} />;
@@ -299,6 +307,7 @@ function Inventory({ navigate }) {
             </div>
             {t.isLowStock && <div className="low-stock-badge">⚠️ Low Stock</div>}
             <div className="tyre-actions">
+              <button onClick={() => navigate(`/inventory/edit/${t.id}`)} style={{ marginRight: 8 }}>Edit</button>
               <button onClick={() => handleDelete(t.id)} className="btn-danger">Delete</button>
             </div>
           </div>
@@ -328,8 +337,13 @@ function Inventory({ navigate }) {
 }
 
 // ============ Tyre Form ============
-function TyreForm({ navigate }) {
-  const [form, setForm] = useState({
+function TyreForm({ navigate, editId }) {
+  const existing = editId ? TyreService.getById(editId) : null;
+  const [form, setForm] = useState(existing ? {
+    brand: existing.brand, model: existing.model, size: existing.size, type: existing.type,
+    costPrice: existing.costPrice, sellingPrice: existing.sellingPrice,
+    quantity: existing.quantity, minStock: existing.minStock,
+  } : {
     brand: '', model: '', size: '', type: 'tubeless',
     costPrice: '', sellingPrice: '', quantity: '', minStock: '2',
   });
@@ -337,6 +351,7 @@ function TyreForm({ navigate }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     const tyre = new Tyre({
+      id: existing ? existing.id : undefined,
       brand: form.brand,
       model: form.model,
       size: form.size,
@@ -352,7 +367,7 @@ function TyreForm({ navigate }) {
 
   return (
     <div className="page">
-      <h1>Add Tyre</h1>
+      <h1>{existing ? 'Edit Tyre' : 'Add Tyre'}</h1>
       <form className="form" onSubmit={handleSubmit}>
         <div className="form-row">
           <label>Brand</label>
@@ -437,6 +452,7 @@ function BillDetail({ navigate, billId }) {
       <div className="bill-detail">
         <div className="detail-row"><strong>Type:</strong> {bill.typeLabel}</div>
         <div className="detail-row"><strong>Party:</strong> {bill.partyName || 'Walk-in'}</div>
+        {bill.invoiceNo && <div className="detail-row"><strong>Invoice No:</strong> {bill.invoiceNo}</div>}
         <div className="detail-row"><strong>Phone:</strong> {bill.partyPhone || '-'}</div>
         <div className="detail-row"><strong>Date:</strong> {new Date(bill.date).toLocaleDateString()}</div>
         <div className="detail-row"><strong>Status:</strong> <span className={`status-badge ${bill.status}`}>{bill.status}</span></div>
@@ -464,6 +480,7 @@ function BillDetail({ navigate, billId }) {
       {bill.notes && <div className="detail-row"><strong>Notes:</strong> {bill.notes}</div>}
       <div className="form-actions">
         {bill.balance > 0 && <button onClick={handlePayment} className="btn-primary">Record Payment</button>}
+        <button onClick={() => navigate(`/bills/edit/${bill.id}`)} style={{ background: '#007bff', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer' }}>Edit Bill</button>
         <button onClick={handleDelete} className="btn-danger">Delete Bill</button>
       </div>
     </div>
@@ -543,8 +560,9 @@ function BillList({ navigate }) {
 }
 
 // ============ Bill Form ============
-function BillForm({ navigate, type }) {
-  const [bill, setBill] = useState(new Bill({ type }));
+function BillForm({ navigate, type, editId }) {
+  const existingBill = editId ? BillService.getById(editId) : null;
+  const [bill, setBill] = useState(existingBill ? new Bill({ ...existingBill }) : new Bill({ type }));
   const [partySearch, setPartySearch] = useState('');
   const [tyreSearch, setTyreSearch] = useState('');
   const [selectedTyre, setSelectedTyre] = useState(null);
@@ -570,8 +588,17 @@ function BillForm({ navigate, type }) {
       return;
     }
     bill.recalculate();
+    // If editing, restore old inventory first
+    if (existingBill) {
+      for (const item of existingBill.items) {
+        if (item.tyreId) {
+          const delta = existingBill.type === 'purchase' ? -item.quantity : item.quantity;
+          TyreService.updateStock(item.tyreId, delta);
+        }
+      }
+    }
     BillService.save(bill);
-    // Apply to inventory
+    // Apply new inventory
     BillService.applyToInventory(bill);
     navigate('/bills');
   };
@@ -586,7 +613,7 @@ function BillForm({ navigate, type }) {
 
   return (
     <div className="page">
-      <h1>{type === 'purchase' ? 'New Purchase Bill' : 'New Sale Bill'}</h1>
+      <h1>{existingBill ? 'Edit Bill' : (type === 'purchase' ? 'New Purchase Bill' : 'New Sale Bill')}</h1>
 
       <div className="form-section">
         <h3>Party Details</h3>
@@ -607,6 +634,10 @@ function BillForm({ navigate, type }) {
         <div className="form-row">
           <label>Phone</label>
           <input value={bill.partyPhone} onChange={e => { bill.partyPhone = e.target.value; setBill(new Bill({...bill})); }} />
+        </div>
+        <div className="form-row">
+          <label>Invoice No</label>
+          <input value={bill.invoiceNo} onChange={e => { bill.invoiceNo = e.target.value; setBill(new Bill({...bill})); }} placeholder="Dealer invoice number" />
         </div>
       </div>
 
@@ -778,7 +809,26 @@ function Scanner({ navigate }) {
           <pre className="raw-text">{result.rawText}</pre>
           <div className="parsed-data">
             <h4>Parsed Data:</h4>
-            <pre>{JSON.stringify(result.data, null, 2)}</pre>
+            {result.data.invoiceNo && <div><strong>Invoice No:</strong> {result.data.invoiceNo}</div>}
+            {result.data.partyName && <div><strong>Party:</strong> {result.data.partyName}</div>}
+            {result.data.date && <div><strong>Date:</strong> {result.data.date}</div>}
+            {result.data.total > 0 && <div><strong>Total:</strong> ₹{result.data.total}</div>}
+            {result.data.items && result.data.items.length > 0 && (
+              <table className="items-table">
+                <thead><tr><th>Brand</th><th>Size</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+                <tbody>
+                  {result.data.items.map((item, i) => (
+                    <tr key={i}>
+                      <td>{item.brand}</td>
+                      <td>{item.size}</td>
+                      <td>{item.quantity}</td>
+                      <td>₹{item.rate}</td>
+                      <td>₹{item.amount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
           <div className="scan-actions">
             <button onClick={handleApplyScan} className="btn-primary">
@@ -809,14 +859,19 @@ function Chatbot({ navigate }) {
 
     // Parse the command
     setTimeout(() => {
-      const response = parseBillCommand(userMsg);
-      setMessages(prev => [...prev, { role: 'bot', text: response.text }]);
-      if (response.bill) {
-        BillService.save(response.bill);
-        BillService.applyToInventory(response.bill);
-        setMessages(prev => [...prev, { role: 'bot', text: `✅ Bill created: ${response.bill.billNumber} — Total: ₹${response.bill.total}` }]);
+      try {
+        const response = parseBillCommand(userMsg);
+        setMessages(prev => [...prev, { role: 'bot', text: response.text }]);
+        if (response.bill) {
+          const savedBill = BillService.save(response.bill);
+          BillService.applyToInventory(savedBill);
+          setMessages(prev => [...prev, { role: 'bot', text: `✅ Bill created: ${savedBill.billNumber} — Total: ₹${savedBill.total}` }]);
+        }
+      } catch (err) {
+        console.error('Chatbot error:', err);
+        setMessages(prev => [...prev, { role: 'bot', text: '❌ Error: ' + (err.message || 'Something went wrong. Try again.' ) }]);
       }
-    }, 500);
+    }, 300);
   };
 
   return (
@@ -852,48 +907,61 @@ function Chatbot({ navigate }) {
 }
 
 function parseBillCommand(text) {
-  const lower = text.toLowerCase();
-  // Determine bill type
-  const isPurchase = lower.includes('purchase') || lower.includes('dealer') || lower.includes('from');
-  const type = isPurchase ? 'purchase' : 'sale';
+  try {
+    const lower = text.toLowerCase();
+    // Determine bill type
+    const isPurchase = lower.includes('purchase') || lower.includes('dealer') || lower.includes('from');
+    const type = isPurchase ? 'purchase' : 'sale';
 
-  // Extract party name (after "for" or "to")
-  let partyName = '';
-  const partyMatch = text.match(/(?:for|to)\s+([A-Za-z\s]+?)(?:[:\-,])/i);
-  if (partyMatch) partyName = partyMatch[1].trim();
+    // Extract party name (after "for" or "to")
+    let partyName = '';
+    const partyMatch = text.match(/(?:for|to)\s+([A-Za-z]+(?:\s+[A-Za-z]+)*?)(?:\s*[:\-,]|\s+\d)/i);
+    if (partyMatch) partyName = partyMatch[1].trim();
 
-  // Extract items: pattern "qty brand size @ rate" or "qty size rate"
-  const items = [];
-  // Pattern 1: "2 MRF 195/65R15 @ 4500" or "2 MRF 195/65R15 at 4500"
-  const regex1 = /(\d+)\s+([A-Za-z]+)\s+(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2})\s*(?:@|at)\s*([\d,]+)/gi;
-  let m;
-  while ((m = regex1.exec(text)) !== null) {
-    items.push({ qty: parseInt(m[1]), brand: m[2], size: m[3], rate: parseFloat(m[4].replace(/,/g, '')) });
-  }
-
-  // Pattern 2: "1 195/65R15 4000" (qty size rate)
-  if (items.length === 0) {
-    const regex2 = /(\d+)\s+(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2})\s+([\d,]+)/gi;
-    while ((m = regex2.exec(text)) !== null) {
-      items.push({ qty: parseInt(m[1]), brand: '', size: m[2], rate: parseFloat(m[3].replace(/,/g, '')) });
+    // Extract items: multiple patterns
+    const items = [];
+    // Pattern 1: "2 MRF 195/65R15 @ 4500" or "2 MRF 195/65R15 at 4500"
+    const regex1 = /(\d+)\s+([A-Za-z][A-Za-z0-9]*)\s+(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2}|\d\.\d{2}-\d{2})\s*(?:@|at|x)\s*([\d,]+)/gi;
+    let m;
+    while ((m = regex1.exec(text)) !== null) {
+      items.push({ qty: parseInt(m[1]), brand: m[2], size: m[3].toUpperCase(), rate: parseFloat(m[4].replace(/,/g, '')) });
     }
-  }
 
-  if (items.length === 0) {
-    return { text: "I couldn't parse any items. Try: 'Create bill for Ramesh: 2 MRF 195/65R15 @ 4500'" };
-  }
+    // Pattern 2: "1 195/65R15 4000" (qty size rate) - no brand
+    if (items.length === 0) {
+      const regex2 = /(\d+)\s+(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2}|\d\.\d{2}-\d{2})\s+([\d,]+)/gi;
+      while ((m = regex2.exec(text)) !== null) {
+        items.push({ qty: parseInt(m[1]), brand: '', size: m[2].toUpperCase(), rate: parseFloat(m[3].replace(/,/g, '')) });
+      }
+    }
 
-  const bill = new Bill({ type, partyName });
-  for (const item of items) {
-    const tyre = TyreService.getAll().find(t =>
-      t.size === item.size && (item.brand ? t.brand.toLowerCase() === item.brand.toLowerCase() : true)
-    );
-    const newTyre = tyre || new Tyre({ brand: item.brand, size: item.size });
-    bill.addItem(newTyre, item.qty, item.rate);
-  }
-  bill.recalculate();
+    // Pattern 3: "2 @ 4500 MRF 195/65R15" (qty @ rate brand size)
+    if (items.length === 0) {
+      const regex3 = /(\d+)\s*(?:@|at)\s*([\d,]+)\s+([A-Za-z][A-Za-z0-9]*)\s+(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2})/gi;
+      while ((m = regex3.exec(text)) !== null) {
+        items.push({ qty: parseInt(m[1]), brand: m[3], size: m[4].toUpperCase(), rate: parseFloat(m[2].replace(/,/g, '')) });
+      }
+    }
 
-  return { text: `Creating ${type} bill for ${partyName || 'walk-in'} with ${items.length} item(s)...`, bill };
+    if (items.length === 0) {
+      return { text: "I couldn't parse any items. Try format: 'Create bill for Ramesh: 2 MRF 195/65R15 @ 4500'" };
+    }
+
+    const bill = new Bill({ type, partyName });
+    for (const item of items) {
+      const tyre = TyreService.getAll().find(t =>
+        t.size === item.size && (item.brand ? t.brand.toLowerCase() === item.brand.toLowerCase() : true)
+      );
+      const newTyre = tyre || new Tyre({ brand: item.brand, size: item.size, type: 'tubeless' });
+      bill.addItem(newTyre, item.qty, item.rate);
+    }
+    bill.recalculate();
+
+    return { text: `Creating ${type} bill for ${partyName || 'walk-in'} with ${items.length} item(s)...`, bill };
+  } catch (err) {
+    console.error('parseBillCommand error:', err);
+    return { text: 'Error parsing command: ' + (err.message || 'Unknown error') };
+  }
 }
 
 // ============ Payments ============
@@ -1041,15 +1109,27 @@ function LoginScreen({ onLogin }) {
 function Parties({ navigate }) {
   const [parties, setParties] = useState(PartyService.getAll());
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: '', phone: '', type: 'customer', address: '', gstin: '' });
+
+  const resetForm = () => {
+    setForm({ name: '', phone: '', type: 'customer', address: '', gstin: '' });
+    setEditingId(null);
+    setShowForm(false);
+  };
+
+  const handleEdit = (party) => {
+    setForm({ name: party.name, phone: party.phone, type: party.type, address: party.address, gstin: party.gstin });
+    setEditingId(party.id);
+    setShowForm(true);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const party = new Party(form);
+    const party = new Party({ id: editingId || undefined, ...form });
     PartyService.save(party);
     setParties(PartyService.getAll());
-    setShowForm(false);
-    setForm({ name: '', phone: '', type: 'customer', address: '', gstin: '' });
+    resetForm();
   };
 
   const handleDelete = (id) => {
@@ -1068,6 +1148,7 @@ function Parties({ navigate }) {
 
       {showForm && (
         <form className="form" onSubmit={handleSubmit}>
+          <h3>{editingId ? 'Edit Party' : 'Add Party'}</h3>
           <div className="form-row"><label>Name</label><input value={form.name} onChange={e => setForm({...form, name: e.target.value})} required /></div>
           <div className="form-row"><label>Phone</label><input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /></div>
           <div className="form-row">
@@ -1081,7 +1162,7 @@ function Parties({ navigate }) {
           <div className="form-row"><label>GSTIN</label><input value={form.gstin} onChange={e => setForm({...form, gstin: e.target.value})} /></div>
           <div className="form-actions">
             <button type="submit">Save</button>
-            <button type="button" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" onClick={resetForm}>Cancel</button>
           </div>
         </form>
       )}
@@ -1098,6 +1179,7 @@ function Parties({ navigate }) {
               {p.address && <span>📍 {p.address}</span>}
               {p.gstin && <span>GSTIN: {p.gstin}</span>}
             </div>
+            <button onClick={() => handleEdit(p)} style={{ marginRight: 8 }} className="btn-sm">Edit</button>
             <button onClick={() => handleDelete(p.id)} className="btn-danger btn-sm">Delete</button>
           </div>
         ))}

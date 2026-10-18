@@ -20,6 +20,7 @@ export class Bill {
   constructor(data = {}) {
     this.id = data.id || crypto.randomUUID();
     this.billNumber = data.billNumber || '';
+    this.invoiceNo = data.invoiceNo || '';
     this.type = data.type || 'sale'; // sale / purchase / formula / estimate
     this.partyId = data.partyId || '';
     this.partyName = data.partyName || '';

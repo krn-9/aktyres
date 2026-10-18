@@ -191,6 +191,7 @@ export const BillService = {
       type: scanData.type || 'purchase',
       partyName: scanData.partyName || '',
       partyPhone: scanData.partyPhone || '',
+      invoiceNo: scanData.invoiceNo || '',
       date: scanData.date || new Date().toISOString(),
     });
     if (scanData.items) {
@@ -304,12 +305,16 @@ export const BillParser = {
   // Parse OCR text from a dealer bill
   parseDealerBill(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const result = { partyName: '', items: [], date: '', total: 0 };
+    const result = { partyName: '', items: [], date: '', total: 0, invoiceNo: '', tyreTags: [] };
+
+    // Try to find invoice number
+    const invoiceMatch = text.match(/(?:invoice|inv|bill|receipt|challan|no\.?|#)\s*[:#]?\s*([A-Z0-9\-\/]+)/i);
+    if (invoiceMatch) result.invoiceNo = invoiceMatch[1].trim();
 
     // Try to find party name (usually first non-empty line or after "To:"/"From:")
     for (const line of lines) {
-      if (/^(to|from|supplier|dealer|party|customer|name)/i.test(line)) {
-        result.partyName = line.replace(/^(to|from|supplier|dealer|party|customer|name)[:\s]*/i, '').trim();
+      if (/^(to|from|supplier|dealer|party|customer|name|sold to|billed to)/i.test(line)) {
+        result.partyName = line.replace(/^(to|from|supplier|dealer|party|customer|name|sold to|billed to)[:\s]*/i, '').trim();
         break;
       }
     }
