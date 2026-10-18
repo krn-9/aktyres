@@ -524,17 +524,29 @@ function Scanner({ navigate }) {
       if (file.type === 'application/pdf') {
         processScanResult('PDF scanning: please convert to image or paste text manually. PDF text extraction requires pdfjs-dist (npm install pdfjs-dist).', scanType);
       } else {
-        // Image OCR
-        const { createWorker } = await import('tesseract.js');
-        const worker = await createWorker('eng');
+        // Image OCR using Tesseract.js with CDN worker
+        const Tesseract = await import('tesseract.js');
+        const worker = await Tesseract.createWorker('eng', 1, {
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+          langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+          corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
+        });
         const { data: { text } } = await worker.recognize(file);
         await worker.terminate();
         processScanResult(text, scanType);
       }
     } catch (err) {
-      alert('Scan failed: ' + err.message);
+      console.error('OCR error:', err);
+      alert('Scan failed: ' + (err.message || 'Unknown error. Try a clearer image or enter text manually below.'));
     }
     setScanning(false);
+  };
+
+  // Manual text input for OCR fallback
+  const [manualText, setManualText] = useState('');
+  const handleManualScan = () => {
+    if (!manualText.trim()) return;
+    processScanResult(manualText, scanType);
   };
 
   const processScanResult = (text, type) => {
@@ -591,6 +603,15 @@ function Scanner({ navigate }) {
           <input type="file" accept="image/*,application/pdf" onChange={handleFileUpload}
             disabled={scanning} style={{display:'none'}} />
         </label>
+      </div>
+
+      <div className="manual-scan">
+        <h3>Or paste bill text manually:</h3>
+        <textarea value={manualText} onChange={e => setManualText(e.target.value)}
+          placeholder="Paste bill text here (e.g. MRF 195/65R15 x2 @ 4500 = 9000)" rows={4} />
+        <button onClick={handleManualScan} className="btn-primary" style={{ marginTop: 8 }}>
+          Parse Text
+        </button>
       </div>
 
       {result && (
