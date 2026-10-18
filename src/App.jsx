@@ -208,6 +208,7 @@ function Dashboard({ navigate }) {
 function Inventory({ navigate }) {
   const [tyres, setTyres] = useState(TyreService.getAll());
   const [search, setSearch] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const filtered = search ? TyreService.search(search) : tyres;
 
@@ -225,11 +226,55 @@ function Inventory({ navigate }) {
     refresh();
   };
 
+  const handleImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const XLSX = await import('xlsx');
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet);
+
+      let imported = 0;
+      for (const row of rows) {
+        const tyre = new Tyre({
+          brand: row.Brand || row.brand || row.BRAND || '',
+          model: row.Model || row.model || row.MODEL || '',
+          size: row.Size || row.size || row.SIZE || '',
+          type: row.Type || row.type || row.TYPE || 'tubeless',
+          costPrice: parseFloat(row.CostPrice || row.costPrice || row['Cost Price'] || row['cost price'] || 0),
+          sellingPrice: parseFloat(row.SellingPrice || row.sellingPrice || row['Selling Price'] || row['selling price'] || 0),
+          quantity: parseInt(row.Quantity || row.quantity || row.QTY || row.qty || 0),
+          minStock: parseInt(row.MinStock || row.minStock || row['Min Stock'] || row['min stock'] || 2),
+        });
+        if (tyre.brand && tyre.size) {
+          TyreService.save(tyre);
+          imported++;
+        }
+      }
+      alert(`Imported ${imported} tyres successfully!`);
+      refresh();
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+    setImporting(false);
+    e.target.value = '';
+  };
+
   return (
     <div className="page">
       <div className="page-header">
         <h1>Inventory</h1>
-        <button onClick={() => navigate('/inventory/add')}>+ Add Tyre</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <label className="btn-primary" style={{ cursor: 'pointer', padding: '10px 16px' }}>
+            {importing ? 'Importing...' : '📥 Import Excel/CSV'}
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImport}
+              disabled={importing} style={{ display: 'none' }} />
+          </label>
+          <button onClick={() => navigate('/inventory/add')}>+ Add Tyre</button>
+        </div>
       </div>
       <input className="search-input" placeholder="Search tyres..." value={search}
         onChange={e => setSearch(e.target.value)} />
@@ -259,7 +304,25 @@ function Inventory({ navigate }) {
           </div>
         ))}
       </div>
-      {filtered.length === 0 && <p className="empty-state">No tyres found. Add your first tyre!</p>}
+      {filtered.length === 0 && <p className="empty-state">No tyres found. Add your first tyre or import from Excel/CSV!</p>}
+
+      <div style={{ marginTop: 20, padding: 12, background: '#f8f9fa', borderRadius: 8, fontSize: '0.85rem' }}>
+        <strong>📥 Import format:</strong> Upload .xlsx, .xls, or .csv with columns:
+        <code style={{ background: '#e9ecef', padding: '2px 6px', borderRadius: 4, marginLeft: 6 }}>
+          Brand, Model, Size, Type, CostPrice, SellingPrice, Quantity, MinStock
+        </code>
+        <br />
+        <button onClick={() => {
+          const csv = 'Brand,Model,Size,Type,CostPrice,SellingPrice,Quantity,MinStock\nMRF,ZLX,195/65R15,tubeless,3200,4500,10,2\nCEAT,Milaze,205/55R16,tubeless,3800,5200,8,2\nJK,Blaze,185/65R14,tubeless,2500,3500,15,3';
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = 'tyre_template.csv'; a.click();
+          URL.revokeObjectURL(url);
+        }} style={{ marginTop: 8, background: 'none', border: '1px solid #ddd', padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}>
+          ⬇️ Download Sample CSV Template
+        </button>
+      </div>
     </div>
   );
 }

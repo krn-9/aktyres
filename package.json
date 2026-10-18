@@ -15,9 +15,11 @@
     "@capacitor/core": "^8.5.3",
     "firebase": "^13.0.0",
     "jspdf": "^4.2.1",
+    "papaparse": "^5.7.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
