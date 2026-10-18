@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { TyreService, BillService, PaymentService, PartyService, SettingsService, BillParser } from './services/dataService';
 import { Tyre } from './models/Tyre';
 import { isFirebaseConfigured } from './services/firebase';
@@ -29,13 +29,24 @@ export default function App() {
       const enabled = await initSync();
       setSyncEnabled(enabled);
       if (enabled) {
+        // Check current user immediately
+        const currentUser = getCurrentUser();
+        if (currentUser) {
+          setUser(currentUser);
+          setAuthReady(true);
+          syncAll().then(() => {
+            startRealtimeSync(() => {
+              window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
+            });
+          });
+        }
+        // Also set up auth state listener for future changes
         onAuthChange((u) => {
           setUser(u);
           setAuthReady(true);
           if (u) {
             syncAll().then(() => {
               startRealtimeSync(() => {
-                // Notify all components to refresh
                 window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
               });
             });
@@ -864,6 +875,7 @@ function Chatbot({ navigate }) {
   const [input, setInput] = useState('');
   const [step, setStep] = useState('idle'); // idle, name, phone, size, brand, tyreName, manufacturer, qty, rate, type, confirm
   const [billData, setBillData] = useState({});
+  const billDataRef = useRef({});
 
   const addBot = (text) => setMessages(prev => [...prev, { role: 'bot', text }]);
   const addUser = (text) => setMessages(prev => [...prev, { role: 'user', text }]);
@@ -871,6 +883,7 @@ function Chatbot({ navigate }) {
   const reset = () => {
     setStep('idle');
     setBillData({});
+    billDataRef.current = {};
     addBot('Reset! Type "start" to create a new bill.');
   };
 
@@ -898,7 +911,7 @@ function Chatbot({ navigate }) {
       }
 
       if (step === 'name') {
-        setBillData(prev => ({ ...prev, partyName: userMsg }));
+        setBillData(prev => { const d = { ...prev, partyName: userMsg }; billDataRef.current = d; return d; });
         setStep('phone');
         addBot(`Name: ${userMsg}\nPhone number? (optional - type "skip" to skip)`);
         return;
@@ -906,21 +919,21 @@ function Chatbot({ navigate }) {
 
       if (step === 'phone') {
         const phone = lower === 'skip' ? '' : userMsg;
-        setBillData(prev => ({ ...prev, partyPhone: phone }));
+        setBillData(prev => { const d = { ...prev, partyPhone: phone }; billDataRef.current = d; return d; });
         setStep('size');
         addBot(phone ? `Phone: ${phone}` : 'Phone: (skipped)\nTyre size? (e.g., 195/65R15, 205/55R16)');
         return;
       }
 
       if (step === 'size') {
-        setBillData(prev => ({ ...prev, size: userMsg.toUpperCase() }));
+        setBillData(prev => { const d = { ...prev, size: userMsg.toUpperCase() }; billDataRef.current = d; return d; });
         setStep('brand');
         addBot(`Size: ${userMsg.toUpperCase()}\nBrand? (e.g., MRF, CEAT, JK, Apollo)`);
         return;
       }
 
       if (step === 'brand') {
-        setBillData(prev => ({ ...prev, brand: userMsg }));
+        setBillData(prev => { const d = { ...prev, brand: userMsg }; billDataRef.current = d; return d; });
         setStep('tyreName');
         addBot(`Brand: ${userMsg}\nTyre model/name? (optional - type "skip" to skip)`);
         return;
@@ -928,7 +941,7 @@ function Chatbot({ navigate }) {
 
       if (step === 'tyreName') {
         const tyreName = lower === 'skip' ? '' : userMsg;
-        setBillData(prev => ({ ...prev, tyreName }));
+        setBillData(prev => { const d = { ...prev, tyreName }; billDataRef.current = d; return d; });
         setStep('manufacturer');
         addBot(tyreName ? `Tyre: ${tyreName}` : 'Tyre: (skipped)\nManufacturer? (optional - type "skip" to skip)');
         return;
@@ -936,7 +949,7 @@ function Chatbot({ navigate }) {
 
       if (step === 'manufacturer') {
         const mfr = lower === 'skip' ? '' : userMsg;
-        setBillData(prev => ({ ...prev, manufacturer: mfr }));
+        setBillData(prev => { const d = { ...prev, manufacturer: mfr }; billDataRef.current = d; return d; });
         setStep('qty');
         addBot(mfr ? `Manufacturer: ${mfr}` : 'Manufacturer: (skipped)\nQuantity? (how many tyres)');
         return;
@@ -948,7 +961,7 @@ function Chatbot({ navigate }) {
           addBot('Please enter a valid number for quantity (e.g., 2, 4, 10)');
           return;
         }
-        setBillData(prev => ({ ...prev, quantity: qty }));
+        setBillData(prev => { const d = { ...prev, quantity: qty }; billDataRef.current = d; return d; });
         setStep('rate');
         addBot(`Quantity: ${qty}\nRate per tyre? (price per unit in ₹)`);
         return;
@@ -960,7 +973,7 @@ function Chatbot({ navigate }) {
           addBot('Please enter a valid price (e.g., 4500, 3200.50)');
           return;
         }
-        setBillData(prev => ({ ...prev, rate }));
+        setBillData(prev => { const d = { ...prev, rate }; billDataRef.current = d; return d; });
         setStep('type');
         addBot(`Rate: ₹${rate}\nBill type? (sale / purchase / estimate) — default: sale`);
         return;
@@ -968,9 +981,9 @@ function Chatbot({ navigate }) {
 
       if (step === 'type') {
         const type = ['sale', 'purchase', 'estimate', 'formula'].includes(lower) ? lower : 'sale';
-        setBillData(prev => ({ ...prev, type }));
+        setBillData(prev => { const d = { ...prev, type }; billDataRef.current = d; return d; });
         setStep('confirm');
-        const d = { ...billData, type };
+        const d = { ...billDataRef.current, type };
         const total = d.quantity * d.rate;
         addBot(`📋 Bill Summary:\n` +
           `Customer: ${d.partyName}\n` +
@@ -986,7 +999,7 @@ function Chatbot({ navigate }) {
       if (step === 'confirm') {
         if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
           try {
-            const d = billData;
+            const d = billDataRef.current;
             const tyre = new Tyre({
               brand: d.brand,
               model: d.tyreName || '',

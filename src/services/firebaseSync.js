@@ -1,18 +1,8 @@
 import { isFirebaseConfigured, initFirebase, getFirestoreInstance, getAuthInstance } from './firebase';
-import { TyreService, BillService, PaymentService, PartyService } from './dataService';
 
 let db = null;
 let auth = null;
 let syncEnabled = false;
-let listeners = [];
-
-// Collection names in Firestore
-const COLLECTIONS = {
-  tyres: 'tyres',
-  bills: 'bills',
-  payments: 'payments',
-  parties: 'parties',
-};
 
 export async function initSync() {
   if (!isFirebaseConfigured()) {
@@ -32,7 +22,6 @@ export function isSyncEnabled() {
   return syncEnabled;
 }
 
-// Sign in with email/password
 export async function signIn(email, password) {
   if (!auth) return null;
   try {
@@ -68,24 +57,32 @@ export function getCurrentUser() {
 }
 
 export function onAuthChange(callback) {
-  if (!auth) return () => {};
-  let unsub;
+  if (!auth) {
+    callback(null);
+    return () => {};
+  }
+  let unsub = null;
+  // Dynamic import but handle the callback properly
   import('firebase/auth').then(({ onAuthStateChanged }) => {
-    unsub = onAuthStateChanged(auth, callback);
+    unsub = onAuthStateChanged(auth, (user) => {
+      callback(user);
+    });
+  }).catch(e => {
+    console.error('Failed to set up auth listener:', e);
+    callback(null);
   });
   return () => { if (unsub) unsub(); };
 }
 
-// Sync a collection: pull from Firestore → localStorage
-export async function pullCollection(collectionName, service) {
-  if (!db || !syncEnabled) return;
+export async function pullCollection(collectionName) {
+  if (!db || !syncEnabled) return null;
   try {
     const { collection, getDocs } = await import('firebase/firestore');
     const snapshot = await getDocs(collection(db, collectionName));
     const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    // Save to localStorage via service
     const storageKey = `tyre_shop_${collectionName}`;
     localStorage.setItem(storageKey, JSON.stringify(items));
+    window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: collectionName } }));
     return items;
   } catch (e) {
     console.error(`Pull ${collectionName} failed:`, e);
@@ -93,7 +90,6 @@ export async function pullCollection(collectionName, service) {
   }
 }
 
-// Push a single document to Firestore
 export async function pushDocument(collectionName, id, data) {
   if (!db || !syncEnabled) return;
   try {
@@ -104,7 +100,6 @@ export async function pushDocument(collectionName, id, data) {
   }
 }
 
-// Delete a document from Firestore
 export async function deleteDocument(collectionName, id) {
   if (!db || !syncEnabled) return;
   try {
@@ -115,45 +110,42 @@ export async function deleteDocument(collectionName, id) {
   }
 }
 
-// Set up real-time listeners for a collection
 export function listenCollection(collectionName, callback) {
   if (!db || !syncEnabled) return () => {};
-  let unsub;
+  let unsub = null;
   import('firebase/firestore').then(({ collection, onSnapshot }) => {
     unsub = onSnapshot(collection(db, collectionName), (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const storageKey = `tyre_shop_${collectionName}`;
       localStorage.setItem(storageKey, JSON.stringify(items));
-      // Notify all components to refresh
       window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: collectionName } }));
-      callback(items);
+      if (callback) callback(items);
+    }, (error) => {
+      console.error(`Listener ${collectionName} error:`, error);
     });
-  });
+  }).catch(e => console.error(`Failed to set up listener for ${collectionName}:`, e));
+
   return () => { if (unsub) unsub(); };
 }
 
-// Sync all collections
 export async function syncAll() {
   if (!syncEnabled) return;
   await Promise.all([
-    pullCollection('tyres', TyreService),
-    pullCollection('bills', BillService),
-    pullCollection('payments', PaymentService),
-    pullCollection('parties', PartyService),
+    pullCollection('tyres'),
+    pullCollection('bills'),
+    pullCollection('payments'),
+    pullCollection('parties'),
   ]);
-  // Notify all components to refresh
-  window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
 }
 
-// Start real-time sync for all collections
-export function startRealtimeSync(onUpdate) {
+export function startRealtimeSync(callback) {
   if (!syncEnabled) return () => {};
   const unsubs = [];
-  for (const coll of Object.keys(COLLECTIONS)) {
+  for (const coll of ['tyres', 'bills', 'payments', 'parties']) {
     const unsub = listenCollection(coll, (items) => {
-      if (onUpdate) onUpdate(coll, items);
+      if (callback) callback(coll, items);
     });
     unsubs.push(unsub);
   }
-  return () => unsubs.forEach(u => u());
+  return () => unsubs.forEach(u => { if (u) u(); });
 }
