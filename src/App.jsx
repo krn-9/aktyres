@@ -880,8 +880,7 @@ function Chatbot({ navigate }) {
     addUser(userMsg);
     setInput('');
 
-    setTimeout(() => {
-      const lower = userMsg.toLowerCase();
+    const lower = userMsg.toLowerCase();
 
       if (lower === 'cancel' || lower === 'reset') {
         reset();
@@ -1028,7 +1027,6 @@ function Chatbot({ navigate }) {
       }
 
       addBot('Type "start" to create a new bill, or "cancel" to reset.');
-    }, 200);
   };
 
   return (
