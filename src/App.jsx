@@ -847,31 +847,176 @@ function Scanner({ navigate }) {
 // ============ Chatbot ============
 function Chatbot({ navigate }) {
   const [messages, setMessages] = useState([
-    { role: 'bot', text: 'Hi! I can help you create a bill. Try: "Create bill for Ramesh: 2 MRF 195/65R15 @ 4500"' }
+    { role: 'bot', text: 'Hi! 👋 I will help you create a bill step by step. Type "start" to begin, or "cancel" to reset.' }
   ]);
   const [input, setInput] = useState('');
+  const [step, setStep] = useState('idle'); // idle, name, phone, size, brand, tyreName, manufacturer, qty, rate, type, confirm
+  const [billData, setBillData] = useState({});
+
+  const addBot = (text) => setMessages(prev => [...prev, { role: 'bot', text }]);
+  const addUser = (text) => setMessages(prev => [...prev, { role: 'user', text }]);
+
+  const reset = () => {
+    setStep('idle');
+    setBillData({});
+    addBot('Reset! Type "start" to create a new bill.');
+  };
 
   const handleSend = () => {
     if (!input.trim()) return;
     const userMsg = input.trim();
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    addUser(userMsg);
     setInput('');
 
-    // Parse the command
     setTimeout(() => {
-      try {
-        const response = parseBillCommand(userMsg);
-        setMessages(prev => [...prev, { role: 'bot', text: response.text }]);
-        if (response.bill) {
-          const savedBill = BillService.save(response.bill);
-          BillService.applyToInventory(savedBill);
-          setMessages(prev => [...prev, { role: 'bot', text: `✅ Bill created: ${savedBill.billNumber} — Total: ₹${savedBill.total}` }]);
-        }
-      } catch (err) {
-        console.error('Chatbot error:', err);
-        setMessages(prev => [...prev, { role: 'bot', text: '❌ Error: ' + (err.message || 'Something went wrong. Try again.' ) }]);
+      const lower = userMsg.toLowerCase();
+
+      if (lower === 'cancel' || lower === 'reset') {
+        reset();
+        return;
       }
-    }, 300);
+
+      if (step === 'idle') {
+        if (lower === 'start' || lower === 'new' || lower === 'create') {
+          setStep('name');
+          addBot('What is the customer/dealer name?');
+        } else {
+          addBot('Type "start" to create a new bill, or "cancel" to reset.');
+        }
+        return;
+      }
+
+      if (step === 'name') {
+        setBillData(prev => ({ ...prev, partyName: userMsg }));
+        setStep('phone');
+        addBot(`Name: ${userMsg}\nPhone number? (optional - type "skip" to skip)`);
+        return;
+      }
+
+      if (step === 'phone') {
+        const phone = lower === 'skip' ? '' : userMsg;
+        setBillData(prev => ({ ...prev, partyPhone: phone }));
+        setStep('size');
+        addBot(phone ? `Phone: ${phone}` : 'Phone: (skipped)\nTyre size? (e.g., 195/65R15, 205/55R16)');
+        return;
+      }
+
+      if (step === 'size') {
+        setBillData(prev => ({ ...prev, size: userMsg.toUpperCase() }));
+        setStep('brand');
+        addBot(`Size: ${userMsg.toUpperCase()}\nBrand? (e.g., MRF, CEAT, JK, Apollo)`);
+        return;
+      }
+
+      if (step === 'brand') {
+        setBillData(prev => ({ ...prev, brand: userMsg }));
+        setStep('tyreName');
+        addBot(`Brand: ${userMsg}\nTyre model/name? (optional - type "skip" to skip)`);
+        return;
+      }
+
+      if (step === 'tyreName') {
+        const tyreName = lower === 'skip' ? '' : userMsg;
+        setBillData(prev => ({ ...prev, tyreName }));
+        setStep('manufacturer');
+        addBot(tyreName ? `Tyre: ${tyreName}` : 'Tyre: (skipped)\nManufacturer? (optional - type "skip" to skip)');
+        return;
+      }
+
+      if (step === 'manufacturer') {
+        const mfr = lower === 'skip' ? '' : userMsg;
+        setBillData(prev => ({ ...prev, manufacturer: mfr }));
+        setStep('qty');
+        addBot(mfr ? `Manufacturer: ${mfr}` : 'Manufacturer: (skipped)\nQuantity? (how many tyres)');
+        return;
+      }
+
+      if (step === 'qty') {
+        const qty = parseInt(userMsg);
+        if (isNaN(qty) || qty < 1) {
+          addBot('Please enter a valid number for quantity (e.g., 2, 4, 10)');
+          return;
+        }
+        setBillData(prev => ({ ...prev, quantity: qty }));
+        setStep('rate');
+        addBot(`Quantity: ${qty}\nRate per tyre? (price per unit in ₹)`);
+        return;
+      }
+
+      if (step === 'rate') {
+        const rate = parseFloat(userMsg.replace(/,/g, ''));
+        if (isNaN(rate) || rate <= 0) {
+          addBot('Please enter a valid price (e.g., 4500, 3200.50)');
+          return;
+        }
+        setBillData(prev => ({ ...prev, rate }));
+        setStep('type');
+        addBot(`Rate: ₹${rate}\nBill type? (sale / purchase / estimate) — default: sale`);
+        return;
+      }
+
+      if (step === 'type') {
+        const type = ['sale', 'purchase', 'estimate', 'formula'].includes(lower) ? lower : 'sale';
+        setBillData(prev => ({ ...prev, type }));
+        setStep('confirm');
+        const d = { ...billData, type };
+        const total = d.quantity * d.rate;
+        addBot(`📋 Bill Summary:\n` +
+          `Customer: ${d.partyName}\n` +
+          `Phone: ${d.partyPhone || 'N/A'}\n` +
+          `Tyre: ${d.brand} ${d.tyreName || ''} ${d.size}\n` +
+          `Manufacturer: ${d.manufacturer || 'N/A'}\n` +
+          `Quantity: ${d.quantity} × ₹${d.rate} = ₹${total}\n` +
+          `Type: ${type}\n\n` +
+          `Type "yes" to create bill, "no" to cancel.`);
+        return;
+      }
+
+      if (step === 'confirm') {
+        if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
+          try {
+            const d = billData;
+            const tyre = new Tyre({
+              brand: d.brand,
+              model: d.tyreName || '',
+              size: d.size,
+              type: 'tubeless',
+              costPrice: 0,
+              sellingPrice: d.rate,
+            });
+            const bill = new Bill({
+              type: d.type || 'sale',
+              partyName: d.partyName,
+              partyPhone: d.partyPhone || '',
+            });
+            bill.addItem(tyre, d.quantity, d.rate);
+            bill.recalculate();
+            const savedBill = BillService.save(bill);
+            BillService.applyToInventory(savedBill);
+            addBot(`✅ Bill created successfully!\n` +
+              `Bill No: ${savedBill.billNumber}\n` +
+              `Total: ₹${savedBill.total}\n` +
+              `Balance: ₹${savedBill.balance}`);
+            setStep('idle');
+            setBillData({});
+            addBot('Type "start" to create another bill.');
+          } catch (err) {
+            addBot('❌ Error creating bill: ' + (err.message || 'Unknown error'));
+            setStep('idle');
+            setBillData({});
+          }
+        } else if (lower === 'no' || lower === 'n' || lower === 'cancel') {
+          addBot('Bill cancelled. Type "start" to create a new bill.');
+          setStep('idle');
+          setBillData({});
+        } else {
+          addBot('Type "yes" to confirm or "no" to cancel.');
+        }
+        return;
+      }
+
+      addBot('Type "start" to create a new bill, or "cancel" to reset.');
+    }, 200);
   };
 
   return (
@@ -882,30 +1027,39 @@ function Chatbot({ navigate }) {
           {messages.map((m, i) => (
             <div key={i} className={`chat-msg ${m.role}`}>
               <span className="chat-avatar">{m.role === 'bot' ? '🤖' : '👤'}</span>
-              <span className="chat-text">{m.text}</span>
+              <span className="chat-text" style={{ whiteSpace: 'pre-line' }}>{m.text}</span>
             </div>
           ))}
         </div>
         <div className="chat-input">
           <input value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Type a command..." />
+            placeholder={step === 'idle' ? 'Type "start"...' : 'Type your answer...'}
+            autoFocus />
           <button onClick={handleSend}>Send</button>
         </div>
       </div>
       <div className="chat-examples">
-        <h3>Examples:</h3>
-        <ul>
-          <li>"Create bill for Ramesh: 2 MRF 195/65R15 @ 4500"</li>
-          <li>"Sale bill for Kumar: 4 CEAT 205/55R16 at 3800 each"</li>
-          <li>"Purchase from DealerX: 10 Apollo 185/65R14 @ 2500"</li>
-          <li>"Bill for Suresh: 1 195/65R15 4000, 2 205/55R16 3500"</li>
-        </ul>
+        <h3>How it works:</h3>
+        <ol style={{ paddingLeft: 20, fontSize: '0.9rem', color: '#555' }}>
+          <li>Type "start" to begin</li>
+          <li>Enter customer/dealer name</li>
+          <li>Phone number (optional)</li>
+          <li>Tyre size (e.g., 195/65R15)</li>
+          <li>Brand (e.g., MRF, CEAT)</li>
+          <li>Tyre model/name (optional)</li>
+          <li>Manufacturer (optional)</li>
+          <li>Quantity</li>
+          <li>Rate per tyre</li>
+          <li>Bill type (sale/purchase/estimate)</li>
+          <li>Confirm → Bill created!</li>
+        </ol>
       </div>
     </div>
   );
 }
 
+// parseBillCommand kept for backward compat (not used by new chatbot)
 function parseBillCommand(text) {
   try {
     const lower = text.toLowerCase();
