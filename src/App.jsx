@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { TyreService, BillService, PaymentService, PartyService, SettingsService, BillParser } from './services/dataService';
 import { Tyre } from './models/Tyre';
-import { isFirebaseConfigured } from './services/firebase';
-import { initSync, signIn, signUp, signOut, getCurrentUser, onAuthChange, startRealtimeSync, syncAll } from './services/firebaseSync';
+import { initSync, signIn, signOut, onAuthChange, startRealtimeSync, syncAll, flushEverything, clearLocalData, getSyncStatus } from './services/firebaseSync';
 import { Bill } from './models/Bill';
 import { Party } from './models/Party';
 
@@ -23,40 +22,108 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [syncEnabled, setSyncEnabled] = useState(false);
+  const stopSyncRef = useRef(null);
+  const syncGenRef = useRef(0);
+
+  // Only one set of realtime listeners may run at a time, and none after sign-out
+  const stopSync = () => {
+    syncGenRef.current++;
+    if (stopSyncRef.current) {
+      stopSyncRef.current();
+      stopSyncRef.current = null;
+    }
+  };
+
+  const beginSync = () => {
+    stopSync();
+    const gen = syncGenRef.current;
+    syncAll().then(() => {
+      if (gen !== syncGenRef.current) return; // signed out or restarted while syncing
+      stopSyncRef.current = startRealtimeSync(() => {
+        window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
+      });
+    });
+  };
 
   useEffect(() => {
+    let cancelled = false;
+    let unsubAuth = null;
     (async () => {
       const enabled = await initSync();
+      if (cancelled) return;
       setSyncEnabled(enabled);
-      if (enabled) {
-        // Check current user immediately
-        const currentUser = getCurrentUser();
-        if (currentUser) {
-          setUser(currentUser);
-          setAuthReady(true);
-          syncAll().then(() => {
-            startRealtimeSync(() => {
-              window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
-            });
-          });
-        }
-        // Also set up auth state listener for future changes
-        onAuthChange((u) => {
-          setUser(u);
-          setAuthReady(true);
-          if (u) {
-            syncAll().then(() => {
-              startRealtimeSync(() => {
-                window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
-              });
-            });
-          }
-        });
-      } else {
+      if (!enabled) {
         setAuthReady(true);
+        return;
       }
+      // Fires once with the restored session (or null) and again on every sign-in/out
+      unsubAuth = onAuthChange((u) => {
+        setUser(u);
+        setAuthReady(true);
+        if (u) beginSync();
+        else stopSync();
+      });
     })();
+    return () => {
+      cancelled = true;
+      if (unsubAuth) unsubAuth();
+      stopSync();
+    };
   }, []);
+
+  // What the sync banner shows; refreshed every couple of seconds while signed in
+  const [syncStatus, setSyncStatus] = useState({ state: 'ok', pending: 0, reason: null });
+  useEffect(() => {
+    if (!syncEnabled || !user) return;
+    let lastWasSyncing = false;
+    const refresh = () => {
+      let next = getSyncStatus();
+      if (next.state === 'syncing') {
+        // Every save is briefly "waiting to upload"; only show the banner if it lasts a couple of seconds
+        if (!lastWasSyncing) next = { state: 'ok', pending: 0, reason: null };
+        lastWasSyncing = true;
+      } else {
+        lastWasSyncing = false;
+      }
+      setSyncStatus(prev => (prev.state === next.state && prev.pending === next.pending && prev.reason === next.reason) ? prev : next);
+    };
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => clearInterval(timer);
+  }, [syncEnabled, user]);
+
+  // If sync isn't working (offline, rules not published yet, ...), try again by itself:
+  // when the app comes back to the foreground, when the network returns, and every 2 minutes.
+  useEffect(() => {
+    if (!syncEnabled || !user) return;
+    let lastTry = 0;
+    const retry = () => {
+      if (getSyncStatus().state === 'ok') return;
+      const now = Date.now();
+      if (now - lastTry < 20000) return;
+      lastTry = now;
+      beginSync();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') retry(); };
+    const timer = setInterval(retry, 120000);
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [syncEnabled, user]);
+
+  const handleSignOut = async () => {
+    // Don't throw away anything that hasn't reached the server yet without asking
+    const synced = await flushEverything();
+    if (!synced && !confirm('Some data on this device has not been uploaded yet and will be lost if you sign out now. Sign out anyway?')) return;
+    stopSync();
+    await signOut();
+    clearLocalData(); // next person to sign in on this device must not see this shop's data
+    setUser(null);
+  };
 
   // Login screen
   if (syncEnabled && !authReady) {
@@ -96,10 +163,35 @@ export default function App() {
 
   return (
     <div className="app">
-      <Navbar navigate={navigate} route={route} settings={settings} user={user} onSignOut={async () => { await signOut(); setUser(null); }} />
+      <Navbar navigate={navigate} route={route} settings={settings} user={user} onSignOut={handleSignOut} />
+      {syncEnabled && syncStatus.state !== 'ok' && (
+        <SyncBanner status={syncStatus} onRetry={beginSync} />
+      )}
       <main className="main-content">
         {renderPage()}
       </main>
+    </div>
+  );
+}
+
+// ============ Sync banner ============
+function SyncBanner({ status, onRetry }) {
+  const reasons = {
+    'permission-denied': 'this account is not allowed to use the shop database yet (ask the owner to check the Firebase rules)',
+    'unavailable': 'cannot reach the server, check the internet connection',
+    'storage-full': 'this device is out of storage space',
+  };
+  const isProblem = status.state === 'problem';
+  const text = isProblem
+    ? `⚠️ Not syncing: ${reasons[status.reason] || 'something went wrong'}. Your changes are saved on this device and will upload when it works. Trying again automatically.`
+    : `⏳ Syncing… ${status.pending > 0 ? `${status.pending} change${status.pending === 1 ? '' : 's'} waiting to upload.` : 'Uploading this device\'s data.'}`;
+  return (
+    <div role="status" style={{
+      background: isProblem ? '#fff3cd' : '#e7f1ff', color: isProblem ? '#664d03' : '#084298',
+      padding: '8px 16px', fontSize: '0.85rem', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+    }}>
+      <span>{text}</span>
+      <button onClick={onRetry} style={{ padding: '2px 10px', cursor: 'pointer' }}>Try now</button>
     </div>
   );
 }
@@ -139,6 +231,14 @@ function Navbar({ navigate, route, settings, user, onSignOut }) {
 
 // ============ Dashboard ============
 function Dashboard({ navigate }) {
+  // Re-render when sync brings in new data (otherwise the cards keep their first values)
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    const handler = () => refresh(n => n + 1);
+    window.addEventListener('dataChanged', handler);
+    return () => window.removeEventListener('dataChanged', handler);
+  }, []);
+
   const tyres = TyreService.getAll();
   const bills = BillService.getAll();
   const unpaid = BillService.getUnpaid();
@@ -215,7 +315,7 @@ function Dashboard({ navigate }) {
             <span>{b.partyName}</span>
             <span>{b.typeLabel}</span>
             <span>₹{b.total.toLocaleString()}</span>
-            <span className={`status ${b.status}`}>{b.status}</span>
+            {b.isFinal && <span className={`status ${b.status}`}>{b.status}</span>}
           </div>
         ))}
       </div>
@@ -441,12 +541,7 @@ function BillDetail({ navigate, billId }) {
 
   const handleDelete = () => {
     if (confirm('Delete this bill? Inventory will be restored.')) {
-      for (const item of bill.items) {
-        if (item.tyreId) {
-          const delta = bill.type === 'purchase' ? -item.quantity : item.quantity;
-          TyreService.updateStock(item.tyreId, delta);
-        }
-      }
+      BillService.revertFromInventory(bill);
       BillService.delete(billId);
       navigate('/bills');
     }
@@ -472,7 +567,7 @@ function BillDetail({ navigate, billId }) {
         {bill.invoiceNo && <div className="detail-row"><strong>Invoice No:</strong> {bill.invoiceNo}</div>}
         <div className="detail-row"><strong>Phone:</strong> {bill.partyPhone || '-'}</div>
         <div className="detail-row"><strong>Date:</strong> {new Date(bill.date).toLocaleDateString()}</div>
-        <div className="detail-row"><strong>Status:</strong> <span className={`status-badge ${bill.status}`}>{bill.status}</span></div>
+        {bill.isFinal && <div className="detail-row"><strong>Status:</strong> <span className={`status-badge ${bill.status}`}>{bill.status}</span></div>}
       </div>
       <table className="items-table">
         <thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
@@ -491,12 +586,12 @@ function BillDetail({ navigate, billId }) {
         <div>Subtotal: ₹{bill.subtotal.toLocaleString()}</div>
         <div>Tax: ₹{bill.tax}</div>
         <div><strong>Total: ₹{bill.total.toLocaleString()}</strong></div>
-        <div>Paid: ₹{bill.paid.toLocaleString()}</div>
-        <div className="balance">Balance: ₹{bill.balance.toLocaleString()}</div>
+        {bill.isFinal && <div>Paid: ₹{bill.paid.toLocaleString()}</div>}
+        {bill.isFinal && <div className="balance">Balance: ₹{bill.balance.toLocaleString()}</div>}
       </div>
       {bill.notes && <div className="detail-row"><strong>Notes:</strong> {bill.notes}</div>}
       <div className="form-actions">
-        {bill.balance > 0 && <button onClick={handlePayment} className="btn-primary">Record Payment</button>}
+        {bill.isFinal && bill.balance > 0 && <button onClick={handlePayment} className="btn-primary">Record Payment</button>}
         <button onClick={() => navigate(`/bills/edit/${bill.id}`)} style={{ background: '#007bff', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer' }}>Edit Bill</button>
         <button onClick={handleDelete} className="btn-danger">Delete Bill</button>
       </div>
@@ -521,22 +616,14 @@ function BillList({ navigate }) {
     e.stopPropagation();
     if (confirm('Delete this bill? This will also restore inventory.')) {
       const bill = BillService.getById(id);
-      if (bill) {
-        // Restore inventory
-        for (const item of bill.items) {
-          if (item.tyreId) {
-            const delta = bill.type === 'purchase' ? -item.quantity : item.quantity;
-            TyreService.updateStock(item.tyreId, delta);
-          }
-        }
-      }
+      if (bill) BillService.revertFromInventory(bill); // Restore inventory
       BillService.delete(id);
       refresh();
     }
   };
 
   const filtered = filter === 'all' ? bills :
-    filter === 'unpaid' ? bills.filter(b => b.status !== 'paid') :
+    filter === 'unpaid' ? bills.filter(b => b.isFinal && b.status !== 'paid') :
     filter === 'paid' ? bills.filter(b => b.status === 'paid') :
     bills.filter(b => b.type === filter);
 
@@ -561,7 +648,7 @@ function BillList({ navigate }) {
           <div key={b.id} className="bill-card" onClick={() => navigate(`/bills/${b.id}`)}>
             <div className="bill-card-header">
               <strong>{b.billNumber}</strong>
-              <span className={`status-badge ${b.status}`}>{b.status}</span>
+              {b.isFinal && <span className={`status-badge ${b.status}`}>{b.status}</span>}
             </div>
             <div className="bill-card-body">
               <span>{b.partyName || 'Walk-in'}</span>
@@ -570,7 +657,7 @@ function BillList({ navigate }) {
             </div>
             <div className="bill-card-footer">
               <span>Total: ₹{b.total.toLocaleString()}</span>
-              {b.balance > 0 && <span className="balance">Balance: ₹{b.balance.toLocaleString()}</span>}
+              {b.isFinal && b.balance > 0 && <span className="balance">Balance: ₹{b.balance.toLocaleString()}</span>}
               <button className="btn-danger btn-sm" onClick={(e) => handleDelete(b.id, e)}
                 style={{ marginLeft: 'auto' }}>Delete</button>
             </div>
@@ -612,14 +699,7 @@ function BillForm({ navigate, type, editId }) {
     }
     bill.recalculate();
     // If editing, restore old inventory first
-    if (existingBill) {
-      for (const item of existingBill.items) {
-        if (item.tyreId) {
-          const delta = existingBill.type === 'purchase' ? -item.quantity : item.quantity;
-          TyreService.updateStock(item.tyreId, delta);
-        }
-      }
-    }
+    if (existingBill) BillService.revertFromInventory(existingBill);
     BillService.save(bill);
     // Apply new inventory
     BillService.applyToInventory(bill);
@@ -723,6 +803,15 @@ function BillForm({ navigate, type, editId }) {
 }
 
 // ============ Scanner ============
+// Stop waiting if a promise takes too long (the OCR language download can hang on a bad connection)
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Scanning took too long. Check the connection and try again, or paste the text below.')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function Scanner({ navigate }) {
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState(null);
@@ -732,26 +821,25 @@ function Scanner({ navigate }) {
     const file = e.target.files[0];
     if (!file) return;
     setScanning(true);
+    let worker = null;
     try {
-      if (file.type === 'application/pdf') {
-        processScanResult('PDF scanning: please convert to image or paste text manually. PDF text extraction requires pdfjs-dist (npm install pdfjs-dist).', scanType);
-      } else {
-        // Image OCR using Tesseract.js with CDN worker
-        const Tesseract = await import('tesseract.js');
-        const worker = await Tesseract.createWorker('eng', 1, {
-          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-          langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-          corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
-        });
-        const { data: { text } } = await worker.recognize(file);
-        await worker.terminate();
-        processScanResult(text, scanType);
-      }
+      // Image OCR using Tesseract.js. No custom worker/core/language URLs: the library's
+      // defaults match the installed version (the old hard-coded v5 URLs did not).
+      const Tesseract = await import('tesseract.js');
+      const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
+      const { data: { text } } = await withTimeout((async () => {
+        worker = await createWorker('eng');
+        return worker.recognize(file);
+      })(), 90000);
+      processScanResult(text, scanType);
     } catch (err) {
       console.error('OCR error:', err);
       alert('Scan failed: ' + (err.message || 'Unknown error. Try a clearer image or enter text manually below.'));
+    } finally {
+      if (worker) await worker.terminate().catch(() => {});
     }
     setScanning(false);
+    e.target.value = '';
   };
 
   // Manual text input for OCR fallback
@@ -772,8 +860,13 @@ function Scanner({ navigate }) {
     }
   };
 
+  // Nothing usable was read from the text: don't let the user save an empty bill/tyre
+  const nothingParsed = !!result && (result.type === 'tyre'
+    ? !result.data.brand && !result.data.size
+    : !(result.data.items && result.data.items.length > 0));
+
   const handleApplyScan = () => {
-    if (!result) return;
+    if (!result || nothingParsed) return;
     if (result.type === 'tyre') {
       // Add tyre to inventory
       const tyre = new Tyre({
@@ -811,8 +904,8 @@ function Scanner({ navigate }) {
 
       <div className="scan-area">
         <label className="scan-upload-btn">
-          {scanning ? 'Scanning...' : '📷 Upload Image / PDF'}
-          <input type="file" accept="image/*,application/pdf" onChange={handleFileUpload}
+          {scanning ? 'Scanning...' : '📷 Upload Image'}
+          <input type="file" accept="image/*" onChange={handleFileUpload}
             disabled={scanning} style={{display:'none'}} />
         </label>
       </div>
@@ -834,7 +927,7 @@ function Scanner({ navigate }) {
             <h4>Parsed Data:</h4>
             {result.data.invoiceNo && <div><strong>Invoice No:</strong> {result.data.invoiceNo}</div>}
             {result.data.partyName && <div><strong>Party:</strong> {result.data.partyName}</div>}
-            {result.data.date && <div><strong>Date:</strong> {result.data.date}</div>}
+            {result.data.date && <div><strong>Date:</strong> {new Date(result.data.date).toLocaleDateString()}</div>}
             {result.data.total > 0 && <div><strong>Total:</strong> ₹{result.data.total}</div>}
             {result.data.items && result.data.items.length > 0 && (
               <table className="items-table">
@@ -853,8 +946,11 @@ function Scanner({ navigate }) {
               </table>
             )}
           </div>
+          {nothingParsed && (
+            <p className="empty-state">Nothing could be read. Try a clearer photo, or paste the text above and tap Parse Text.</p>
+          )}
           <div className="scan-actions">
-            <button onClick={handleApplyScan} className="btn-primary">
+            <button onClick={handleApplyScan} className="btn-primary" disabled={nothingParsed}>
               {result.type === 'tyre' ? 'Add to Inventory' : 'Create Bill'}
             </button>
             <button onClick={() => setResult(null)}>Discard</button>
@@ -1000,14 +1096,17 @@ function Chatbot({ navigate }) {
         if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
           try {
             const d = billDataRef.current;
-            const tyre = new Tyre({
+            const isFinal = d.type === 'sale' || d.type === 'purchase';
+            // Use the tyre already in inventory (or add it) so the bill actually moves stock.
+            // Estimates/formulas don't touch inventory, so they don't create tyres either.
+            const tyre = TyreService.findOrCreate({
               brand: d.brand,
               model: d.tyreName || '',
               size: d.size,
               type: 'tubeless',
-              costPrice: 0,
-              sellingPrice: d.rate,
-            });
+              costPrice: d.type === 'purchase' ? d.rate : 0,
+              sellingPrice: d.type === 'purchase' ? 0 : d.rate,
+            }, isFinal);
             const bill = new Bill({
               type: d.type || 'sale',
               partyName: d.partyName,
@@ -1235,22 +1334,17 @@ function Payments({ navigate }) {
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // No self-service sign-up: accounts are created by the shop owner in the Firebase console
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      if (isSignUp) {
-        const u = await signUp(email, password);
-        onLogin(u);
-      } else {
-        const u = await signIn(email, password);
-        onLogin(u);
-      }
+      const u = await signIn(email, password);
+      onLogin(u);
     } catch (err) {
       setError(err.message || 'Authentication failed');
     }
@@ -1273,15 +1367,11 @@ function LoginScreen({ onLogin }) {
         {error && <div style={{ color: 'red', marginBottom: 10, fontSize: '0.9rem' }}>{error}</div>}
         <div className="form-actions">
           <button type="submit" disabled={loading} className="btn-primary">
-            {loading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}
+            {loading ? 'Please wait...' : 'Sign In'}
           </button>
         </div>
-        <p style={{ textAlign: 'center', marginTop: 12, fontSize: '0.9rem' }}>
-          {isSignUp ? 'Already have an account?' : "Don't have an account?"}
-          <button type="button" onClick={() => setIsSignUp(!isSignUp)}
-            style={{ background: 'none', border: 'none', color: '#e94560', cursor: 'pointer', marginLeft: 6 }}>
-            {isSignUp ? 'Sign In' : 'Sign Up'}
-          </button>
+        <p style={{ textAlign: 'center', marginTop: 12, fontSize: '0.9rem', color: '#666' }}>
+          Need access? Ask the shop owner to create your account.
         </p>
       </form>
     </div>

@@ -65,6 +65,11 @@ export class Bill {
     }
   }
 
+  // Only sale and purchase bills move stock and take payments; estimates and formulas don't
+  get isFinal() {
+    return this.type === 'sale' || this.type === 'purchase';
+  }
+
   get typeLabel() {
     const labels = { sale: 'Sales Bill', purchase: 'Purchase Bill', formula: 'Formula', estimate: 'Estimate' };
     return labels[this.type] || 'Bill';

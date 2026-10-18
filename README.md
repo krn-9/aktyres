@@ -301,7 +301,6 @@ initFirebase() — initializes Firebase app, Firestore, Auth
 | `initSync()` | Initialize Firebase sync, returns boolean |
 | `isSyncEnabled()` | Check if sync is active |
 | `signIn(email, password)` | Firebase email/password sign in |
-| `signUp(email, password)` | Create new account |
 | `signOut()` | Sign out |
 | `getCurrentUser()` | Get current Firebase user |
 | `onAuthChange(callback)` | Listen for auth state changes |
@@ -367,20 +366,19 @@ Hash-based routing (no react-router). `useRoute()` hook reads `window.location.h
 ### Setup
 1. Firebase project: `aktyres-billbook`
 2. Authentication: Email/Password
-3. Firestore: test mode (all authenticated users can read/write)
+3. Firestore: production mode, using the rules in `firestore.rules` (see below)
 4. Collections: `tyres`, `bills`, `payments`, `parties`
 
+### Locking down access (do this before going live)
+Sign-up is not available in the app, so only accounts you create can sign in. Because the repo and Firebase config are public, also switch sign-up off on the server side:
+1. Firebase console → Authentication → Settings → User actions → untick **Enable create (sign-up)**.
+2. Authentication → Users → add an account (email + password) for each family member, and delete any account you don't recognise.
+3. Edit the email list in `firestore.rules`, then paste it into Firestore Database → Rules and **Publish**.
+   Use the lowercase email addresses exactly as shown under Authentication → Users, and keep the real addresses in the Firebase console copy only (this repo is public).
+   Publish the rules only after the matching app version is deployed. Until the rules allow access, the app shows a yellow "Not syncing" banner and keeps everything on the device; it uploads automatically once the rules are published.
+
 ### Firestore Security Rules
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}
-```
+See `firestore.rules`. Only the listed emails can read or write `tyres`, `bills`, `payments` and `parties`.
 
 ### Config Location
 `src/services/firebase.js` → `firebaseConfig` object
@@ -605,7 +603,7 @@ git push origin main
 ## Known Issues & TODOs
 
 ### Known Issues
-1. **PDF scanning** — Not fully implemented (requires pdfjs-dist). Currently shows a message to convert PDF to image.
+1. **PDF scanning** — Not implemented; the scanner accepts images only (needs pdfjs-dist for PDFs).
 2. **Firebase config hardcoded** — Config is in `firebase.js` (not env vars). For production, consider using env vars.
 3. **No image icons** — PWA manifest references `/icon-192.png` and `/icon-512.png` which don't exist yet.
 4. **Capacitor Android** — Android project exists but not fully configured (google-services.json placed).

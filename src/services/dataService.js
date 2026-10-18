@@ -59,14 +59,19 @@ export function notifyDataChange() {
   window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
 }
 
+// Numbered in sequence per day (TS-YYMMDD-001, -002, ...) so two bills never share a number
 function generateBillNumber() {
   const now = new Date();
-  const prefix = 'TS';
-  const date = now.getFullYear().toString().slice(2) + 
-    String(now.getMonth() + 1).padStart(2, '0') + 
+  const date = now.getFullYear().toString().slice(2) +
+    String(now.getMonth() + 1).padStart(2, '0') +
     String(now.getDate()).padStart(2, '0');
-  const seq = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  return `${prefix}-${date}-${seq}`;
+  const prefix = `TS-${date}-`;
+  const used = load(KEYS.bills)
+    .map(b => String(b.billNumber || ''))
+    .filter(n => n.startsWith(prefix))
+    .map(n => parseInt(n.slice(prefix.length), 10) || 0);
+  const seq = (used.length ? Math.max(...used) : 0) + 1;
+  return prefix + String(seq).padStart(3, '0');
 }
 
 // ============ Tyre Service ============
@@ -105,11 +110,29 @@ export const TyreService = {
     });
   },
 
-  updateStock(id, delta) {
+  // The +/- buttons never go below 0. Bills pass allowNegative so that editing or deleting a bill
+  // is the exact inverse of saving it, even if the shop sold more than it had on record.
+  updateStock(id, delta, allowNegative = false) {
     const tyre = this.getById(id);
     if (!tyre) return null;
-    tyre.quantity = Math.max(0, tyre.quantity + delta);
+    const next = tyre.quantity + delta;
+    tyre.quantity = allowNegative ? next : Math.max(0, next);
     return this.save(tyre);
+  },
+
+  // Find a tyre by brand + size (+ model when given). If there isn't one, create and save it
+  // (stock 0) so a bill item always points at a real inventory record. Pass create=false to get
+  // an unsaved tyre instead (used for estimates, which shouldn't add to inventory).
+  findOrCreate({ brand = '', model = '', size = '', type = 'tubeless', costPrice = 0, sellingPrice = 0 }, create = true) {
+    const norm = s => (s || '').trim().toLowerCase();
+    const found = this.getAll().find(t =>
+      norm(t.brand) === norm(brand) &&
+      norm(t.size) === norm(size) &&
+      (!model || norm(t.model) === norm(model))
+    );
+    if (found) return found;
+    const tyre = new Tyre({ brand, model, size, type, costPrice, sellingPrice });
+    return create ? this.save(tyre) : tyre;
   },
 
   search(query) {
@@ -179,6 +202,16 @@ export const PartyService = {
   },
 };
 
+// OCR can misread a header row or a table as an item. Only lines that look like a real tyre line
+// add tyres to inventory automatically; the rest still go on the bill but don't touch stock.
+function looksLikeRealItem(item) {
+  const brand = (item.brand || '').trim();
+  return /^[A-Za-z][A-Za-z0-9 \-]{0,29}$/.test(brand) &&
+    brand.toLowerCase() !== 'unknown' &&
+    Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 500 &&
+    item.rate > 0;
+}
+
 // ============ Bill Service ============
 export const BillService = {
   getAll() {
@@ -226,7 +259,7 @@ export const BillService = {
   },
 
   getUnpaid() {
-    return this.getAll().filter(b => b.status !== 'paid');
+    return this.getAll().filter(b => b.isFinal && b.status !== 'paid');
   },
 
   getPaid() {
@@ -250,27 +283,39 @@ export const BillService = {
     });
     if (scanData.items) {
       for (const item of scanData.items) {
-        const tyre = TyreService.getAll().find(t =>
-          t.brand.toLowerCase() === (item.brand || '').toLowerCase() &&
-          t.size === item.size
-        );
-        bill.addItem(
-          tyre || new Tyre({ brand: item.brand, size: item.size, type: item.type }),
-          item.quantity,
-          item.rate
-        );
+        // Tyres not in inventory yet are saved here, so applyToInventory can update their stock
+        const tyre = TyreService.findOrCreate({
+          brand: item.brand,
+          size: item.size,
+          type: item.type,
+          costPrice: bill.type === 'purchase' ? item.rate : 0,
+          sellingPrice: bill.type === 'purchase' ? 0 : item.rate,
+        }, bill.isFinal && looksLikeRealItem(item));
+        bill.addItem(tyre, item.quantity, item.rate);
       }
     }
     bill.recalculate();
     return bill;
   },
 
-  // Apply bill to inventory
+  // Apply bill to inventory (only sale/purchase bills move stock, not estimates/formulas)
   applyToInventory(bill) {
+    if (!bill.isFinal) return;
     for (const item of bill.items) {
       if (item.tyreId) {
         const delta = bill.type === 'purchase' ? item.quantity : -item.quantity;
-        TyreService.updateStock(item.tyreId, delta);
+        TyreService.updateStock(item.tyreId, delta, true);
+      }
+    }
+  },
+
+  // Undo applyToInventory (when a bill is edited or deleted)
+  revertFromInventory(bill) {
+    if (!bill.isFinal) return;
+    for (const item of bill.items) {
+      if (item.tyreId) {
+        const delta = bill.type === 'purchase' ? -item.quantity : item.quantity;
+        TyreService.updateStock(item.tyreId, delta, true);
       }
     }
   },
@@ -363,6 +408,20 @@ export const SettingsService = {
 };
 
 // ============ OCR Parser ============
+// JS reads "12/10/2024" month-first and rejects "25/12/2024", so build the date by hand.
+// Returns an ISO string, or '' if the text isn't a real date.
+function parseBillDate(str) {
+  const m = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
+  if (!m) return '';
+  const day = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  let year = parseInt(m[3], 10);
+  if (year < 100) year += 2000;
+  const d = new Date(year, month - 1, day, 12);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return '';
+  return d.toISOString();
+}
+
 export const BillParser = {
   // Parse OCR text from a dealer bill
   parseDealerBill(text) {
@@ -384,9 +443,13 @@ export const BillParser = {
       result.partyName = lines[0];
     }
 
-    // Try to find date
-    const dateMatch = text.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
-    if (dateMatch) result.date = dateMatch[1];
+    // Try to find date (bills are day-first: 25/12/2024)
+    const dateRegex = /(?:^|[^\d])(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2}(?:\d{2})?)(?!\d)/g;
+    let dateMatch;
+    while ((dateMatch = dateRegex.exec(text)) !== null) {
+      const parsed = parseBillDate(dateMatch[1]);
+      if (parsed) { result.date = parsed; break; }
+    }
 
     // Try to find total
     const totalMatch = text.match(/total[:\s]*(?:rs\.?|₹|inr)?\s*([\d,]+(?:\.\d{2})?)/i);
@@ -398,12 +461,12 @@ export const BillParser = {
     //   MRF 195/65R15 x4 @4500 = 18000
     //   2 MRF 195/65R15 @ 4500
     const sizePattern = /(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2}|\d\.\d{2}-\d{2})/i;
-    const itemRegex = /([A-Za-z][A-Za-z0-9\s\-]*?)\s*(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2}|\d\.\d{2}-\d{2})\s*[xX×]?\s*(\d+(?:\.\d+)?)\s*[@at]*\s*([\d,]+(?:\.\d{2})?)/gi;
+    const itemRegex = /([A-Za-z][A-Za-z0-9 \t\-]*?)[ \t]*(\d{3}\/\d{2}R\d{2}|\d{2,3}\/\d{2}-\d{2}|\d\.\d{2}-\d{2})\s*[xX×]?\s*(\d+(?:\.\d+)?)\s*[@at]*\s*([\d,]+(?:\.\d{2})?)/gi;
 
     let match;
     while ((match = itemRegex.exec(text)) !== null) {
       const brand = match[1].trim();
-      const size = match[2].trim();
+      const size = match[2].trim().toUpperCase();
       const qty = parseFloat(match[3]);
       const rate = parseFloat(match[4].replace(/,/g, ''));
       result.items.push({
@@ -421,14 +484,16 @@ export const BillParser = {
       for (const line of lines) {
         const sizeMatch = line.match(sizePattern);
         if (sizeMatch) {
-          const nums = line.match(/[\d,]+(?:\.\d{2})?/g);
+          // Quantity and rate come from the rest of the line: the size's own digits don't count
+          const rest = line.replace(sizeMatch[0], ' ');
+          const nums = rest.match(/\d[\d,]*(?:\.\d{1,2})?/g);
           if (nums && nums.length >= 2) {
             result.items.push({
-              brand: line.replace(sizeMatch[0], '').replace(/[\d,\.]+/g, '').trim() || 'Unknown',
-              size: sizeMatch[0],
+              brand: rest.replace(/[^A-Za-z\s\-]/g, ' ').replace(/\s+/g, ' ').trim() || 'Unknown',
+              size: sizeMatch[0].toUpperCase(),
               type: 'tubeless',
-              quantity: parseFloat(nums[0]) || 1,
-              rate: parseFloat((nums[1] || '0').replace(/,/g, '')),
+              quantity: parseFloat(nums[0].replace(/,/g, '')) || 1,
+              rate: parseFloat(nums[1].replace(/,/g, '')) || 0,
               amount: 0,
             });
           }

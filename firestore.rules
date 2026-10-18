@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Paste this into Firebase console → Firestore Database → Rules, then Publish.
+// Replace the two REPLACE_WITH_EMAIL entries with the lowercase emails of the accounts you
+// created under Authentication → Users (add more lines for more people). Do this in the console
+// copy only: this repo is public, so don't commit real addresses.
+// Left unedited, these placeholders are not valid emails, so nobody gets access (safe default).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isShopUser() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'REPLACE_WITH_EMAIL_1',
+          'REPLACE_WITH_EMAIL_2'
+        ];
+    }
+
+    match /{collection}/{docId} {
+      allow read, write: if isShopUser()
+        && collection in ['tyres', 'bills', 'payments', 'parties'];
+    }
+  }
+}
