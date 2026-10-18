@@ -3,6 +3,22 @@ import { Bill, BillItem } from '../models/Bill';
 import { Payment } from '../models/Payment';
 import { Party } from '../models/Party';
 
+// Firebase sync helper (lazy loaded)
+let _pushDoc = null;
+let _deleteDoc = null;
+async function getFirebaseSync() {
+  if (!_pushDoc) {
+    try {
+      const mod = await import('./firebaseSync');
+      _pushDoc = mod.pushDocument;
+      _deleteDoc = mod.deleteDocument;
+    } catch (e) {
+      // Firebase not available
+    }
+  }
+  return { push: _pushDoc, del: _deleteDoc };
+}
+
 // Local storage keys
 const KEYS = {
   tyres: 'tyre_shop_tyres',
@@ -23,9 +39,24 @@ function load(key) {
 function save(key, data) {
   try {
     localStorage.setItem(key, JSON.stringify(data));
+    // Dispatch event for reactive updates
+    window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key } }));
+    // Push to Firebase if sync enabled (async, non-blocking)
+    if (window._firebaseSync) {
+      const collectionName = key.replace('tyre_shop_', '');
+      // For arrays, push each item
+      if (Array.isArray(data)) {
+        // Handled by individual service push calls
+      }
+    }
   } catch (e) {
     console.error('Storage save failed:', e);
   }
+}
+
+// Helper to notify all components of data changes
+export function notifyDataChange() {
+  window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
 }
 
 function generateBillNumber() {
@@ -58,12 +89,20 @@ export const TyreService = {
       tyres.push({ ...tyre });
     }
     save(KEYS.tyres, tyres);
+    // Push to Firebase
+    getFirebaseSync().then(({ push }) => {
+      if (push) push('tyres', tyre.id, { ...tyre });
+    });
     return tyre;
   },
 
   delete(id) {
     const tyres = load(KEYS.tyres).filter(t => t.id !== id);
     save(KEYS.tyres, tyres);
+    // Delete from Firebase
+    getFirebaseSync().then(({ del }) => {
+      if (del) del('tyres', id);
+    });
   },
 
   updateStock(id, delta) {
@@ -111,12 +150,20 @@ export const PartyService = {
       parties.push({ ...party });
     }
     save(KEYS.parties, parties);
+    // Push to Firebase
+    getFirebaseSync().then(({ push }) => {
+      if (push) push('parties', party.id, { ...party });
+    });
     return party;
   },
 
   delete(id) {
     const parties = load(KEYS.parties).filter(p => p.id !== id);
     save(KEYS.parties, parties);
+    // Delete from Firebase
+    getFirebaseSync().then(({ del }) => {
+      if (del) del('parties', id);
+    });
   },
 
   search(query) {
@@ -150,21 +197,28 @@ export const BillService = {
     bill.recalculate();
     const bills = load(KEYS.bills);
     const idx = bills.findIndex(b => b.id === bill.id);
+    const data = bill.toFirestore();
+    data.id = bill.id;
     if (idx >= 0) {
-      bills[idx] = bill.toFirestore();
-      bills[idx].id = bill.id;
+      bills[idx] = data;
     } else {
-      const data = bill.toFirestore();
-      data.id = bill.id;
       bills.push(data);
     }
     save(KEYS.bills, bills);
+    // Push to Firebase
+    getFirebaseSync().then(({ push }) => {
+      if (push) push('bills', bill.id, data);
+    });
     return bill;
   },
 
   delete(id) {
     const bills = load(KEYS.bills).filter(b => b.id !== id);
     save(KEYS.bills, bills);
+    // Delete from Firebase
+    getFirebaseSync().then(({ del }) => {
+      if (del) del('bills', id);
+    });
   },
 
   getByType(type) {
@@ -241,12 +295,20 @@ export const PaymentService = {
       payments.push({ ...payment });
     }
     save(KEYS.payments, payments);
+    // Push to Firebase
+    getFirebaseSync().then(({ push }) => {
+      if (push) push('payments', payment.id, { ...payment });
+    });
     return payment;
   },
 
   delete(id) {
     const payments = load(KEYS.payments).filter(p => p.id !== id);
     save(KEYS.payments, payments);
+    // Delete from Firebase
+    getFirebaseSync().then(({ del }) => {
+      if (del) del('payments', id);
+    });
   },
 
   getByBill(billId) {

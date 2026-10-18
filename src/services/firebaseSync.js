@@ -124,6 +124,8 @@ export function listenCollection(collectionName, callback) {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const storageKey = `tyre_shop_${collectionName}`;
       localStorage.setItem(storageKey, JSON.stringify(items));
+      // Notify all components to refresh
+      window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: collectionName } }));
       callback(items);
     });
   });
@@ -139,6 +141,8 @@ export async function syncAll() {
     pullCollection('payments', PaymentService),
     pullCollection('parties', PartyService),
   ]);
+  // Notify all components to refresh
+  window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
 }
 
 // Start real-time sync for all collections

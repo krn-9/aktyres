@@ -35,8 +35,8 @@ export default function App() {
           if (u) {
             syncAll().then(() => {
               startRealtimeSync(() => {
-                // Force re-render by updating a dummy state
-                window.dispatchEvent(new Event('storage'));
+                // Notify all components to refresh
+                window.dispatchEvent(new CustomEvent('dataChanged', { detail: { key: 'all' } }));
               });
             });
           }
@@ -218,9 +218,15 @@ function Inventory({ navigate }) {
   const [search, setSearch] = useState('');
   const [importing, setImporting] = useState(false);
 
-  const filtered = search ? TyreService.search(search) : tyres;
-
   const refresh = () => setTyres(TyreService.getAll());
+
+  useEffect(() => {
+    const handler = () => refresh();
+    window.addEventListener('dataChanged', handler);
+    return () => window.removeEventListener('dataChanged', handler);
+  }, []);
+
+  const filtered = search ? TyreService.search(search) : tyres;
 
   const handleDelete = (id) => {
     if (confirm('Delete this tyre?')) {
@@ -493,6 +499,12 @@ function BillList({ navigate }) {
   const [filter, setFilter] = useState('all');
 
   const refresh = () => setBills(BillService.getAll());
+
+  useEffect(() => {
+    const handler = () => refresh();
+    window.addEventListener('dataChanged', handler);
+    return () => window.removeEventListener('dataChanged', handler);
+  }, []);
 
   const handleDelete = (id, e) => {
     e.stopPropagation();
@@ -1122,6 +1134,12 @@ function parseBillCommand(text) {
 function Payments({ navigate }) {
   const [payments, setPayments] = useState(PaymentService.getAll());
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setPayments(PaymentService.getAll());
+    window.addEventListener('dataChanged', handler);
+    return () => window.removeEventListener('dataChanged', handler);
+  }, []);
   const [form, setForm] = useState({ billId: '', amount: '', method: 'cash', reference: '', notes: '' });
 
   const unpaidBills = BillService.getUnpaid();
@@ -1263,6 +1281,12 @@ function LoginScreen({ onLogin }) {
 function Parties({ navigate }) {
   const [parties, setParties] = useState(PartyService.getAll());
   const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setParties(PartyService.getAll());
+    window.addEventListener('dataChanged', handler);
+    return () => window.removeEventListener('dataChanged', handler);
+  }, []);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: '', phone: '', type: 'customer', address: '', gstin: '' });
 
