@@ -57,6 +57,9 @@ export default function App() {
   }
 
   const renderPage = () => {
+    if (route.startsWith('/bills/') && route !== '/bills/new' && route !== '/bills/purchase') {
+      return <BillDetail navigate={navigate} billId={route.replace('/bills/', '')} />;
+    }
     switch (route) {
       case '/': return <Dashboard navigate={navigate} />;
       case '/inventory': return <Inventory navigate={navigate} />;
@@ -334,10 +337,100 @@ function TyreForm({ navigate }) {
   );
 }
 
+// ============ Bill Detail ============
+function BillDetail({ navigate, billId }) {
+  const bill = BillService.getById(billId);
+  if (!bill) {
+    return <div className="page"><h1>Bill not found</h1><button onClick={() => navigate('/bills')}>Back</button></div>;
+  }
+
+  const handleDelete = () => {
+    if (confirm('Delete this bill? Inventory will be restored.')) {
+      for (const item of bill.items) {
+        if (item.tyreId) {
+          const delta = bill.type === 'purchase' ? -item.quantity : item.quantity;
+          TyreService.updateStock(item.tyreId, delta);
+        }
+      }
+      BillService.delete(billId);
+      navigate('/bills');
+    }
+  };
+
+  const handlePayment = () => {
+    const amount = prompt('Enter payment amount:');
+    if (amount && parseFloat(amount) > 0) {
+      PaymentService.recordPayment(bill.id, parseFloat(amount), 'cash', '', '');
+      navigate('/bills');
+    }
+  };
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <h1>{bill.billNumber}</h1>
+        <button onClick={() => navigate('/bills')}>← Back</button>
+      </div>
+      <div className="bill-detail">
+        <div className="detail-row"><strong>Type:</strong> {bill.typeLabel}</div>
+        <div className="detail-row"><strong>Party:</strong> {bill.partyName || 'Walk-in'}</div>
+        <div className="detail-row"><strong>Phone:</strong> {bill.partyPhone || '-'}</div>
+        <div className="detail-row"><strong>Date:</strong> {new Date(bill.date).toLocaleDateString()}</div>
+        <div className="detail-row"><strong>Status:</strong> <span className={`status-badge ${bill.status}`}>{bill.status}</span></div>
+      </div>
+      <table className="items-table">
+        <thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+        <tbody>
+          {bill.items.map(item => (
+            <tr key={item.id}>
+              <td>{item.tyreName}</td>
+              <td>{item.quantity}</td>
+              <td>₹{item.rate}</td>
+              <td>₹{item.total}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="bill-totals">
+        <div>Subtotal: ₹{bill.subtotal.toLocaleString()}</div>
+        <div>Tax: ₹{bill.tax}</div>
+        <div><strong>Total: ₹{bill.total.toLocaleString()}</strong></div>
+        <div>Paid: ₹{bill.paid.toLocaleString()}</div>
+        <div className="balance">Balance: ₹{bill.balance.toLocaleString()}</div>
+      </div>
+      {bill.notes && <div className="detail-row"><strong>Notes:</strong> {bill.notes}</div>}
+      <div className="form-actions">
+        {bill.balance > 0 && <button onClick={handlePayment} className="btn-primary">Record Payment</button>}
+        <button onClick={handleDelete} className="btn-danger">Delete Bill</button>
+      </div>
+    </div>
+  );
+}
+
 // ============ Bill List ============
 function BillList({ navigate }) {
   const [bills, setBills] = useState(BillService.getAll());
   const [filter, setFilter] = useState('all');
+
+  const refresh = () => setBills(BillService.getAll());
+
+  const handleDelete = (id, e) => {
+    e.stopPropagation();
+    if (confirm('Delete this bill? This will also restore inventory.')) {
+      const bill = BillService.getById(id);
+      if (bill) {
+        // Restore inventory
+        for (const item of bill.items) {
+          if (item.tyreId) {
+            const delta = bill.type === 'purchase' ? -item.quantity : item.quantity;
+            TyreService.updateStock(item.tyreId, delta);
+          }
+        }
+      }
+      BillService.delete(id);
+      refresh();
+    }
+  };
 
   const filtered = filter === 'all' ? bills :
     filter === 'unpaid' ? bills.filter(b => b.status !== 'paid') :
@@ -375,6 +468,8 @@ function BillList({ navigate }) {
             <div className="bill-card-footer">
               <span>Total: ₹{b.total.toLocaleString()}</span>
               {b.balance > 0 && <span className="balance">Balance: ₹{b.balance.toLocaleString()}</span>}
+              <button className="btn-danger btn-sm" onClick={(e) => handleDelete(b.id, e)}
+                style={{ marginLeft: 'auto' }}>Delete</button>
             </div>
           </div>
         ))}
