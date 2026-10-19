@@ -303,3 +303,9 @@ label.btn-primary { display: inline-block; text-align: center; border-radius: va
   .hero-value { font-size: 1.8rem; }
   .items-table th, .items-table td { padding: 9px 8px; font-size: .82rem; }
 }
+
+/* New item while billing */
+.new-item { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px dashed #cfd3df; border-radius: var(--radius); background: #fafbfd; }
+.new-item-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.new-item .form-row { margin-bottom: 0; }
+.new-item .btn-primary { align-self: flex-start; }

@@ -688,12 +688,43 @@ function BillForm({ navigate, type, editId }) {
   const [tyreSearch, setTyreSearch] = useState('');
   const [selectedTyre, setSelectedTyre] = useState(null);
   const [qty, setQty] = useState(1);
+  // An item that isn't in the inventory yet (or isn't a tyre at all): typed in while billing
+  const [showNew, setShowNew] = useState(false);
+  const [newItem, setNewItem] = useState({ name: '', model: '', size: '', qty: 1, rate: '', inventory: type === 'purchase' });
   const [rate, setRate] = useState('');
   const [payNow, setPayNow] = useState(true);      // new bills are marked paid unless unticked
   const [payMode, setPayMode] = useState('cash');
 
   const parties = PartyService.search(partySearch);
   const tyres = TyreService.search(tyreSearch);
+
+  const handleAddNewItem = () => {
+    const name = newItem.name.trim();
+    const quantity = parseInt(newItem.qty) || 1;
+    const price = parseFloat(newItem.rate);
+    if (!name) { alert('Enter the item name'); return; }
+    if (isNaN(price) || price < 0) { alert('Enter the rate'); return; }
+    const size = newItem.size.trim().toUpperCase();
+    const model = newItem.model.trim();
+    let tyre;
+    if (newItem.inventory) {
+      // Save it as a new tyre in the inventory (stock then moves with this bill)
+      tyre = TyreService.findOrCreate({
+        brand: name, model, size, type: 'tubeless',
+        costPrice: bill.type === 'purchase' ? price : 0,
+        sellingPrice: bill.type === 'purchase' ? 0 : price,
+      }, bill.isFinal);
+    } else {
+      // Bill-only item: appears on the bill, doesn't touch stock
+      const label = [name, model, size].filter(Boolean).join(' ');
+      tyre = { id: '', brand: name, size, type: '', sellingPrice: price, displayName: () => label };
+    }
+    const next = new Bill({ ...bill });
+    next.addItem(tyre, quantity, price);
+    setBill(next);
+    setNewItem({ name: '', model: '', size: '', qty: 1, rate: '', inventory: bill.type === 'purchase' });
+    setShowNew(false);
+  };
 
   const handleAddItem = () => {
     if (!selectedTyre) return;
@@ -779,6 +810,42 @@ function BillForm({ navigate, type, editId }) {
             <input type="number" value={qty} onChange={e => setQty(e.target.value)} min="1" style={{width:60}} />
             <input type="number" value={rate} onChange={e => setRate(e.target.value)} placeholder="Rate" style={{width:80}} />
             <button onClick={handleAddItem}>Add</button>
+          </div>
+        )}
+        <div>
+          <button type="button" className="ghost" onClick={() => setShowNew(!showNew)}>
+            {showNew ? '− Cancel new item' : '+ Item not in the list? Add a new item'}
+          </button>
+        </div>
+        {showNew && (
+          <div className="new-item">
+            <div className="form-row">
+              <label>Item name / brand</label>
+              <input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} placeholder="e.g. MRF, Valve, Wheel cap" />
+            </div>
+            <div className="new-item-grid">
+              <div className="form-row">
+                <label>Model (optional)</label>
+                <input value={newItem.model} onChange={e => setNewItem({ ...newItem, model: e.target.value })} />
+              </div>
+              <div className="form-row">
+                <label>Size (optional)</label>
+                <input value={newItem.size} onChange={e => setNewItem({ ...newItem, size: e.target.value })} placeholder="195/65R15" />
+              </div>
+              <div className="form-row">
+                <label>Quantity</label>
+                <input type="number" min="1" value={newItem.qty} onChange={e => setNewItem({ ...newItem, qty: e.target.value })} />
+              </div>
+              <div className="form-row">
+                <label>Rate (₹)</label>
+                <input type="number" min="0" value={newItem.rate} onChange={e => setNewItem({ ...newItem, rate: e.target.value })} />
+              </div>
+            </div>
+            <label className="check-row">
+              <input type="checkbox" checked={newItem.inventory} onChange={e => setNewItem({ ...newItem, inventory: e.target.checked })} />
+              <span>Also add to inventory (stock {bill.type === 'purchase' ? 'goes up' : 'goes down'} with this bill)</span>
+            </label>
+            <button type="button" className="btn-primary" onClick={handleAddNewItem}>Add to bill</button>
           </div>
         )}
       </div>
