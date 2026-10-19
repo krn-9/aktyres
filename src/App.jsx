@@ -22,7 +22,9 @@ function useRoute() {
 const REQUIRE_LOGIN = false;
 
 export default function App() {
-  const [route, navigate] = useRoute();
+  const [fullRoute, navigate] = useRoute();
+  const route = fullRoute.split('?')[0];                       // e.g. /bills
+  const params = new URLSearchParams(fullRoute.split('?')[1] || ''); // e.g. filter=unpaid
   const [settings] = useState(SettingsService.get());
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -159,9 +161,9 @@ export default function App() {
     switch (route) {
       case '/': return <DayBook navigate={navigate} />;
       case '/overview': return <Dashboard navigate={navigate} />;
-      case '/inventory': return <Inventory navigate={navigate} />;
+      case '/inventory': return <Inventory navigate={navigate} params={params} />;
       case '/inventory/add': return <TyreForm navigate={navigate} />;
-      case '/bills': return <BillList navigate={navigate} />;
+      case '/bills': return <BillList navigate={navigate} params={params} />;
       case '/bills/new': return <BillForm navigate={navigate} type="sale" />;
       case '/bills/purchase': return <BillForm navigate={navigate} type="purchase" />;
       case '/scan': return <Scanner navigate={navigate} />;
@@ -178,7 +180,7 @@ export default function App() {
       {syncEnabled && syncStatus.state !== 'ok' && (
         <SyncBanner status={syncStatus} onRetry={beginSync} />
       )}
-      <main className="main-content">
+      <main className="main-content" key={fullRoute}>
         {renderPage()}
       </main>
     </div>
@@ -242,6 +244,17 @@ function Navbar({ navigate, route, settings, user, onSignOut }) {
 }
 
 // ============ Dashboard ============
+// A summary card that opens the list behind the number
+function StatCard({ value, label, to, navigate, warning }) {
+  return (
+    <div className={`stat-card clickable ${warning ? 'warning' : ''}`} role="button" tabIndex={0}
+      onClick={() => navigate(to)} onKeyDown={e => { if (e.key === 'Enter') navigate(to); }}>
+      <div className="stat-value">{value}</div>
+      <div className="stat-label">{label} <span aria-hidden="true">›</span></div>
+    </div>
+  );
+}
+
 function Dashboard({ navigate }) {
   // Re-render when sync brings in new data (otherwise the cards keep their first values)
   const [, refresh] = useState(0);
@@ -263,38 +276,14 @@ function Dashboard({ navigate }) {
     <div className="page">
       <h1>Overview</h1>
       <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-value">{tyres.length}</div>
-          <div className="stat-label">Tyre Types</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{tyres.reduce((s,t) => s + t.quantity, 0)}</div>
-          <div className="stat-label">Total Stock</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">₹{totalStockValue.toLocaleString()}</div>
-          <div className="stat-label">Stock Value</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{bills.length}</div>
-          <div className="stat-label">Total Bills</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">₹{totalSales.toLocaleString()}</div>
-          <div className="stat-label">Total Sales</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">₹{totalPurchases.toLocaleString()}</div>
-          <div className="stat-label">Total Purchases</div>
-        </div>
-        <div className="stat-card warning">
-          <div className="stat-value">{unpaid.length}</div>
-          <div className="stat-label">Unpaid Bills</div>
-        </div>
-        <div className="stat-card warning">
-          <div className="stat-value">{lowStock.length}</div>
-          <div className="stat-label">Low Stock Items</div>
-        </div>
+        <StatCard value={tyres.length} label="Tyre Types" to="/inventory" navigate={navigate} />
+        <StatCard value={tyres.reduce((s, t) => s + t.quantity, 0)} label="Total Stock" to="/inventory" navigate={navigate} />
+        <StatCard value={`₹${totalStockValue.toLocaleString()}`} label="Stock Value" to="/inventory?filter=value" navigate={navigate} />
+        <StatCard value={bills.length} label="Total Bills" to="/bills" navigate={navigate} />
+        <StatCard value={`₹${totalSales.toLocaleString()}`} label="Total Sales" to="/bills?filter=sale" navigate={navigate} />
+        <StatCard value={`₹${totalPurchases.toLocaleString()}`} label="Total Purchases" to="/bills?filter=purchase" navigate={navigate} />
+        <StatCard value={unpaid.length} label="Unpaid Bills" to="/bills?filter=unpaid" navigate={navigate} warning />
+        <StatCard value={lowStock.length} label="Low Stock Items" to="/inventory?filter=low" navigate={navigate} warning />
       </div>
 
       {lowStock.length > 0 && (
@@ -334,7 +323,7 @@ function Dashboard({ navigate }) {
 }
 
 // ============ Inventory ============
-function Inventory({ navigate }) {
+function Inventory({ navigate, params }) {
   const [tyres, setTyres] = useState(TyreService.getAll());
   const [search, setSearch] = useState('');
   const [importing, setImporting] = useState(false);
@@ -347,7 +336,11 @@ function Inventory({ navigate }) {
     return () => window.removeEventListener('dataChanged', handler);
   }, []);
 
-  const filtered = search ? TyreService.search(search) : tyres;
+  const [view, setView] = useState(['low', 'value'].includes(params?.get('filter')) ? params.get('filter') : 'all');
+  let filtered = search ? TyreService.search(search) : tyres;
+  // Low stock: the emptiest shelves first
+  if (view === 'low') filtered = filtered.filter(t => t.isLowStock).sort((a, b) => a.quantity - b.quantity);
+  if (view === 'value') filtered = [...filtered].sort((a, b) => b.stockValue - a.stockValue);
 
   const handleDelete = (id) => {
     if (confirm('Delete this tyre?')) {
@@ -413,6 +406,14 @@ function Inventory({ navigate }) {
       </div>
       <input className="search-input" placeholder="Search tyres..." value={search}
         onChange={e => setSearch(e.target.value)} />
+      <div className="filter-bar">
+        {[['all', 'All'], ['low', 'Low stock'], ['value', 'By stock value']].map(([key, label]) => (
+          <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>
+        ))}
+        <span className="muted" style={{ marginLeft: 'auto', alignSelf: 'center' }}>
+          {filtered.length} items · {filtered.reduce((n, t) => n + t.quantity, 0)} in stock · worth ₹{filtered.reduce((n, t) => n + t.stockValue, 0).toLocaleString()}
+        </span>
+      </div>
       <div className="tyre-grid">
         {filtered.map(t => (
           <div key={t.id} className={`tyre-card ${t.isLowStock ? 'low-stock' : ''}`}>
@@ -424,6 +425,7 @@ function Inventory({ navigate }) {
               <span>Type: {t.type}</span>
               <span>Cost: ₹{t.costPrice}</span>
               <span>Sell: ₹{t.sellingPrice}</span>
+              {view === 'value' && <span><strong>Stock value: ₹{t.stockValue.toLocaleString()}</strong></span>}
             </div>
             <div className="tyre-stock">
               <span className="stock-qty">{t.quantity} in stock</span>
@@ -611,9 +613,9 @@ function BillDetail({ navigate, billId }) {
 }
 
 // ============ Bill List ============
-function BillList({ navigate }) {
+function BillList({ navigate, params }) {
   const [bills, setBills] = useState(BillService.getAll());
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(['all', 'sale', 'purchase', 'unpaid', 'paid'].includes(params?.get('filter')) ? params.get('filter') : 'all');
 
   const refresh = () => setBills(BillService.getAll());
 
@@ -655,7 +657,7 @@ function BillList({ navigate }) {
         ))}
       </div>
       <div className="bill-list">
-        {filtered.sort((a,b) => new Date(b.date) - new Date(a.date)).map(b => (
+        {[...filtered].sort((a, b) => filter === 'unpaid' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date)).map(b => (
           <div key={b.id} className="bill-card" onClick={() => navigate(`/bills/${b.id}`)}>
             <div className="bill-card-header">
               <strong>{b.billNumber}</strong>

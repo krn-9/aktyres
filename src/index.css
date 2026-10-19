@@ -309,3 +309,8 @@ label.btn-primary { display: inline-block; text-align: center; border-radius: va
 .new-item-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .new-item .form-row { margin-bottom: 0; }
 .new-item .btn-primary { align-self: flex-start; }
+
+/* Clickable overview cards */
+.stat-card.clickable { cursor: pointer; transition: box-shadow .15s, transform .15s, border-color .15s; }
+.stat-card.clickable:hover { box-shadow: var(--shadow); transform: translateY(-2px); border-color: #d3d7e3; }
+.stat-card.clickable:focus-visible { outline: 2px solid rgba(233, 69, 96, .45); outline-offset: 2px; }
