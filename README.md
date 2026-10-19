@@ -450,6 +450,9 @@ Fallback: user can paste bill text manually and click "Parse Text".
 
 ---
 
+## Login
+The app opens straight to the Day Book with no sign-in (`REQUIRE_LOGIN = false` at the top of `src/App.jsx`). The Firestore rules must then allow open access, which means anyone with the app link can read and change the shop's data. To require a login again, set `REQUIRE_LOGIN = true`, create the accounts in Firebase Authentication and publish the allow-list rules from `firestore.rules`.
+
 ## Day Book (home page)
 The home page is the shop's daily book: cash in the counter, online received, and a statement with cash on the left and online on the right.
 - Work done (car wash, puncture, air, nitrogen, tyre sale, alignment, balancing, other) is added with an amount and cash/online. Data: `dayEntries` collection (`src/models/DayEntry.js`).

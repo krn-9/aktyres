@@ -17,6 +17,10 @@ function useRoute() {
   return [route, (r) => { window.location.hash = r; }];
 }
 
+// The shop chose to open the app without a login screen. Set this to true to require a sign-in again
+// (and use the email allow-list in firestore.rules instead of the open rules).
+const REQUIRE_LOGIN = false;
+
 export default function App() {
   const [route, navigate] = useRoute();
   const [settings] = useState(SettingsService.get());
@@ -57,6 +61,11 @@ export default function App() {
         setAuthReady(true);
         return;
       }
+      if (!REQUIRE_LOGIN) {
+        setAuthReady(true);
+        beginSync();
+        return;
+      }
       // Fires once with the restored session (or null) and again on every sign-in/out
       unsubAuth = onAuthChange((u) => {
         setUser(u);
@@ -75,7 +84,7 @@ export default function App() {
   // What the sync banner shows; refreshed every couple of seconds while signed in
   const [syncStatus, setSyncStatus] = useState({ state: 'ok', pending: 0, reason: null });
   useEffect(() => {
-    if (!syncEnabled || !user) return;
+    if (!syncEnabled || (REQUIRE_LOGIN && !user)) return;
     let lastWasSyncing = false;
     const refresh = () => {
       let next = getSyncStatus();
@@ -96,7 +105,7 @@ export default function App() {
   // If sync isn't working (offline, rules not published yet, ...), try again by itself:
   // when the app comes back to the foreground, when the network returns, and every 2 minutes.
   useEffect(() => {
-    if (!syncEnabled || !user) return;
+    if (!syncEnabled || (REQUIRE_LOGIN && !user)) return;
     let lastTry = 0;
     const retry = () => {
       if (getSyncStatus().state === 'ok') return;
@@ -131,7 +140,7 @@ export default function App() {
     return <div className="page"><p>Loading...</p></div>;
   }
 
-  if (syncEnabled && !user) {
+  if (REQUIRE_LOGIN && syncEnabled && !user) {
     return <LoginScreen onLogin={setUser} />;
   }
 
