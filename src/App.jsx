@@ -4,6 +4,7 @@ import { Tyre } from './models/Tyre';
 import { initSync, signIn, signOut, onAuthChange, startRealtimeSync, syncAll, flushEverything, clearLocalData, getSyncStatus } from './services/firebaseSync';
 import { Bill } from './models/Bill';
 import { Party } from './models/Party';
+import DayBook from './DayBook';
 
 // Simple hash-based router
 function useRoute() {
@@ -147,7 +148,8 @@ export default function App() {
       return <TyreForm navigate={navigate} editId={route.replace('/inventory/edit/', '')} />;
     }
     switch (route) {
-      case '/': return <Dashboard navigate={navigate} />;
+      case '/': return <DayBook navigate={navigate} />;
+      case '/overview': return <Dashboard navigate={navigate} />;
       case '/inventory': return <Inventory navigate={navigate} />;
       case '/inventory/add': return <TyreForm navigate={navigate} />;
       case '/bills': return <BillList navigate={navigate} />;
@@ -157,7 +159,7 @@ export default function App() {
       case '/chatbot': return <Chatbot navigate={navigate} />;
       case '/payments': return <Payments navigate={navigate} />;
       case '/parties': return <Parties navigate={navigate} />;
-      default: return <Dashboard navigate={navigate} />;
+      default: return <DayBook navigate={navigate} />;
     }
   };
 
@@ -199,11 +201,12 @@ function SyncBanner({ status, onRetry }) {
 // ============ Navbar ============
 function Navbar({ navigate, route, settings, user, onSignOut }) {
   const links = [
-    { path: '/', label: '📊 Dashboard' },
+    { path: '/', label: '📒 Day Book' },
+    { path: '/overview', label: '📊 Overview' },
     { path: '/inventory', label: '🛞 Inventory' },
     { path: '/bills', label: '🧾 Bills' },
     { path: '/scan', label: '📷 Scan' },
-    { path: '/chatbot', label: '🤖 Create Bill' },
+    { path: '/chatbot', label: '🤖 Chatbot' },
     { path: '/payments', label: '💰 Payments' },
     { path: '/parties', label: '👥 Parties' },
   ];
@@ -249,7 +252,7 @@ function Dashboard({ navigate }) {
 
   return (
     <div className="page">
-      <h1>Dashboard</h1>
+      <h1>Overview</h1>
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-value">{tyres.length}</div>
@@ -299,11 +302,9 @@ function Dashboard({ navigate }) {
       <div className="quick-actions">
         <h2>Quick Actions</h2>
         <div className="action-buttons">
-          <button onClick={() => navigate('/bills/new')}>+ New Sale Bill</button>
-          <button onClick={() => navigate('/bills/purchase')}>+ New Purchase Bill</button>
           <button onClick={() => navigate('/inventory/add')}>+ Add Tyre</button>
           <button onClick={() => navigate('/scan')}>📷 Scan Bill</button>
-          <button onClick={() => navigate('/chatbot')}>🤖 Create Bill via Chat</button>
+          <button onClick={() => navigate('/chatbot')}>🤖 Chatbot</button>
         </div>
       </div>
 
@@ -586,6 +587,7 @@ function BillDetail({ navigate, billId }) {
         <div>Subtotal: ₹{bill.subtotal.toLocaleString()}</div>
         <div>Tax: ₹{bill.tax}</div>
         <div><strong>Total: ₹{bill.total.toLocaleString()}</strong></div>
+        {bill.gstEnabled && <div>incl. GST ({bill.gstRate}%): ₹{bill.gstAmount.toLocaleString()}</div>}
         {bill.isFinal && <div>Paid: ₹{bill.paid.toLocaleString()}</div>}
         {bill.isFinal && <div className="balance">Balance: ₹{bill.balance.toLocaleString()}</div>}
       </div>
@@ -678,6 +680,8 @@ function BillForm({ navigate, type, editId }) {
   const [selectedTyre, setSelectedTyre] = useState(null);
   const [qty, setQty] = useState(1);
   const [rate, setRate] = useState('');
+  const [payNow, setPayNow] = useState(true);      // new bills are marked paid unless unticked
+  const [payMode, setPayMode] = useState('cash');
 
   const parties = PartyService.search(partySearch);
   const tyres = TyreService.search(tyreSearch);
@@ -699,10 +703,14 @@ function BillForm({ navigate, type, editId }) {
     }
     bill.recalculate();
     // If editing, restore old inventory first
-    if (existingBill) BillService.revertFromInventory(existingBill);
-    BillService.save(bill);
-    // Apply new inventory
-    BillService.applyToInventory(bill);
+    if (existingBill) {
+      BillService.revertFromInventory(existingBill);
+      BillService.save(bill);
+      // Apply new inventory
+      BillService.applyToInventory(bill);
+    } else {
+      BillService.finalize(bill, payNow && bill.isFinal ? payMode : null);
+    }
     navigate('/bills');
   };
 
@@ -786,8 +794,42 @@ function BillForm({ navigate, type, editId }) {
           <div>Subtotal: ₹{bill.subtotal.toLocaleString()}</div>
           <div>Tax: <input type="number" value={bill.tax} onChange={e => { bill.tax = parseFloat(e.target.value)||0; bill.recalculate(); setBill(new Bill({...bill})); }} style={{width:80}} /></div>
           <div><strong>Total: ₹{bill.total.toLocaleString()}</strong></div>
+          {bill.gstEnabled && <div>incl. GST ({bill.gstRate}%): ₹{bill.gstAmount.toLocaleString()}</div>}
         </div>
+        <label className="check-row">
+          <input type="checkbox" checked={bill.gstEnabled}
+            onChange={e => { const next = new Bill({ ...bill }); next.gstEnabled = e.target.checked; next.recalculate(); setBill(next); }} />
+          <span>GST (prices already include GST)</span>
+        </label>
+        {bill.gstEnabled && (
+          <div className="form-row" style={{ maxWidth: 160 }}>
+            <label>GST rate (%)</label>
+            <input type="number" min="0" value={bill.gstRate}
+              onChange={e => { const next = new Bill({ ...bill }); next.gstRate = parseFloat(e.target.value) || 0; next.recalculate(); setBill(next); }} />
+          </div>
+        )}
       </div>
+
+      {!existingBill && bill.isFinal && (
+        <div className="form-section">
+          <h3>Payment</h3>
+          <label className="check-row">
+            <input type="checkbox" checked={payNow} onChange={e => setPayNow(e.target.checked)} />
+            <span>Paid in full {payNow ? '' : '(this bill will be saved as unpaid)'}</span>
+          </label>
+          {payNow && (
+            <div className="form-row" style={{ maxWidth: 220 }}>
+              <label>Paid by</label>
+              <select value={payMode} onChange={e => setPayMode(e.target.value)}>
+                <option value="cash">Cash</option>
+                <option value="upi">Online (UPI)</option>
+                <option value="bank">Bank transfer</option>
+                <option value="cheque">Cheque</option>
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="form-section">
         <h3>Notes</h3>
@@ -969,7 +1011,7 @@ function Chatbot({ navigate }) {
     { role: 'bot', text: 'Hi! 👋 I will help you create a bill step by step. Type "start" to begin, or "cancel" to reset.' }
   ]);
   const [input, setInput] = useState('');
-  const [step, setStep] = useState('idle'); // idle, name, phone, size, brand, tyreName, manufacturer, qty, rate, type, confirm
+  const [step, setStep] = useState('idle'); // idle, name, phone, size, brand, tyreName, manufacturer, qty, rate, type, gst, paid, confirm
   const [billData, setBillData] = useState({});
   const billDataRef = useRef({});
 
@@ -1017,7 +1059,7 @@ function Chatbot({ navigate }) {
         const phone = lower === 'skip' ? '' : userMsg;
         setBillData(prev => { const d = { ...prev, partyPhone: phone }; billDataRef.current = d; return d; });
         setStep('size');
-        addBot(phone ? `Phone: ${phone}` : 'Phone: (skipped)\nTyre size? (e.g., 195/65R15, 205/55R16)');
+        addBot(`${phone ? `Phone: ${phone}` : 'Phone: (skipped)'}\nTyre size? (e.g., 195/65R15, 205/55R16)`);
         return;
       }
 
@@ -1039,7 +1081,7 @@ function Chatbot({ navigate }) {
         const tyreName = lower === 'skip' ? '' : userMsg;
         setBillData(prev => { const d = { ...prev, tyreName }; billDataRef.current = d; return d; });
         setStep('manufacturer');
-        addBot(tyreName ? `Tyre: ${tyreName}` : 'Tyre: (skipped)\nManufacturer? (optional - type "skip" to skip)');
+        addBot(`${tyreName ? `Tyre: ${tyreName}` : 'Tyre: (skipped)'}\nManufacturer? (optional - type "skip" to skip)`);
         return;
       }
 
@@ -1047,7 +1089,7 @@ function Chatbot({ navigate }) {
         const mfr = lower === 'skip' ? '' : userMsg;
         setBillData(prev => { const d = { ...prev, manufacturer: mfr }; billDataRef.current = d; return d; });
         setStep('qty');
-        addBot(mfr ? `Manufacturer: ${mfr}` : 'Manufacturer: (skipped)\nQuantity? (how many tyres)');
+        addBot(`${mfr ? `Manufacturer: ${mfr}` : 'Manufacturer: (skipped)'}\nQuantity? (how many tyres)`);
         return;
       }
 
@@ -1075,20 +1117,51 @@ function Chatbot({ navigate }) {
         return;
       }
 
-      if (step === 'type') {
-        const type = ['sale', 'purchase', 'estimate', 'formula'].includes(lower) ? lower : 'sale';
-        setBillData(prev => { const d = { ...prev, type }; billDataRef.current = d; return d; });
-        setStep('confirm');
-        const d = { ...billDataRef.current, type };
+      // Shows the summary and asks for the final yes/no
+      const showSummary = (d) => {
         const total = d.quantity * d.rate;
+        const gstPart = d.gst ? Math.round((total - total / 1.18) * 100) / 100 : 0;
+        setStep('confirm');
         addBot(`📋 Bill Summary:\n` +
           `Customer: ${d.partyName}\n` +
           `Phone: ${d.partyPhone || 'N/A'}\n` +
           `Tyre: ${d.brand} ${d.tyreName || ''} ${d.size}\n` +
           `Manufacturer: ${d.manufacturer || 'N/A'}\n` +
           `Quantity: ${d.quantity} × ₹${d.rate} = ₹${total}\n` +
-          `Type: ${type}\n\n` +
-          `Type "yes" to create bill, "no" to cancel.`);
+          `Type: ${d.type}\n` +
+          `GST: ${d.gst ? `included (18%, ₹${gstPart})` : 'no'}\n` +
+          (d.type === 'sale' || d.type === 'purchase'
+            ? `Payment: ${d.payMode ? (d.payMode === 'cash' ? 'paid in cash' : 'paid online') : 'unpaid'}\n`
+            : '') +
+          `\nType "yes" to create bill, "no" to cancel.`);
+      };
+
+      if (step === 'type') {
+        const type = ['sale', 'purchase', 'estimate', 'formula'].includes(lower) ? lower : 'sale';
+        setBillData(prev => { const d = { ...prev, type }; billDataRef.current = d; return d; });
+        setStep('gst');
+        addBot(`Bill type: ${type}\nIs GST included in the price? (yes / no) — default: no`);
+        return;
+      }
+
+      if (step === 'gst') {
+        const gst = lower === 'yes' || lower === 'y';
+        setBillData(prev => { const d = { ...prev, gst }; billDataRef.current = d; return d; });
+        const d = { ...billDataRef.current, gst };
+        if (d.type === 'sale' || d.type === 'purchase') {
+          setStep('paid');
+          addBot(`GST: ${gst ? 'included (18%)' : 'no'}\nPayment received? (cash / online / unpaid) — default: cash`);
+        } else {
+          showSummary(d);
+        }
+        return;
+      }
+
+      if (step === 'paid') {
+        const payMode = ['unpaid', 'no', 'credit', 'later'].includes(lower) ? null
+          : (['online', 'upi', 'gpay', 'phonepe', 'paytm'].includes(lower) ? 'upi' : 'cash');
+        setBillData(prev => { const d = { ...prev, payMode }; billDataRef.current = d; return d; });
+        showSummary({ ...billDataRef.current, payMode });
         return;
       }
 
@@ -1111,11 +1184,12 @@ function Chatbot({ navigate }) {
               type: d.type || 'sale',
               partyName: d.partyName,
               partyPhone: d.partyPhone || '',
+              gstEnabled: !!d.gst,
+              gstRate: 18,
             });
             bill.addItem(tyre, d.quantity, d.rate);
             bill.recalculate();
-            const savedBill = BillService.save(bill);
-            BillService.applyToInventory(savedBill);
+            const savedBill = BillService.finalize(bill, d.payMode || null);
             addBot(`✅ Bill created successfully!\n` +
               `Bill No: ${savedBill.billNumber}\n` +
               `Total: ₹${savedBill.total}\n` +
@@ -1143,7 +1217,7 @@ function Chatbot({ navigate }) {
 
   return (
     <div className="page">
-      <h1>Create Bill via Chat</h1>
+      <h1>Chatbot</h1>
       <div className="chat-container">
         <div className="chat-messages">
           {messages.map((m, i) => (

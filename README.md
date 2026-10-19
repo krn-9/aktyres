@@ -378,7 +378,7 @@ Sign-up is not available in the app, so only accounts you create can sign in. Be
    Publish the rules only after the matching app version is deployed. Until the rules allow access, the app shows a yellow "Not syncing" banner and keeps everything on the device; it uploads automatically once the rules are published.
 
 ### Firestore Security Rules
-See `firestore.rules`. Only the listed emails can read or write `tyres`, `bills`, `payments` and `parties`.
+See `firestore.rules`. Only the listed emails can read or write the shop's data (every collection, including the Day Book).
 
 ### Config Location
 `src/services/firebase.js` → `firebaseConfig` object
@@ -449,6 +449,18 @@ Extracts from tyre sidewall photo:
 Fallback: user can paste bill text manually and click "Parse Text".
 
 ---
+
+## Day Book (home page)
+The home page is the shop's daily book: cash in the counter, online received, and a statement with cash on the left and online on the right.
+- Work done (car wash, puncture, air, nitrogen, tyre sale, alignment, balancing, other) is added with an amount and cash/online. Data: `dayEntries` collection (`src/models/DayEntry.js`).
+- Payments recorded on bills appear automatically (sale payments come in, purchase payments go out). UPI, bank and cheque count as online.
+- Cash taken home is entered at the end of the day (`days` collection). What is left in the counter becomes the next day's starting cash; it can be changed by hand.
+- Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
+
+## Bills: GST and payment
+- Bills are created under Bills (Sale / Purchase). The Chatbot is a separate, optional way to create one.
+- A new bill is marked paid by default (cash, UPI, bank or cheque); untick it to save an unpaid bill. See `BillService.finalize`.
+- GST: prices already include GST; the bill shows the GST part (default 18%, editable).
 
 ## Chatbot Flow
 

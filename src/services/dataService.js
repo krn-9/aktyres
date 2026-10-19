@@ -2,6 +2,7 @@ import { Tyre } from '../models/Tyre';
 import { Bill, BillItem } from '../models/Bill';
 import { Payment } from '../models/Payment';
 import { Party } from '../models/Party';
+import { DayEntry } from '../models/DayEntry';
 
 // Firebase sync helper (lazy loaded)
 let _pushDoc = null;
@@ -26,6 +27,8 @@ const KEYS = {
   payments: 'tyre_shop_payments',
   parties: 'tyre_shop_parties',
   settings: 'tyre_shop_settings',
+  dayEntries: 'tyre_shop_dayEntries',
+  days: 'tyre_shop_days',
 };
 
 // Generic local storage helpers
@@ -246,6 +249,7 @@ export const BillService = {
   },
 
   delete(id) {
+    PaymentService.getByBill(id).forEach(p => PaymentService.delete(p.id));
     const bills = load(KEYS.bills).filter(b => b.id !== id);
     save(KEYS.bills, bills);
     // Delete from Firebase
@@ -296,6 +300,17 @@ export const BillService = {
     }
     bill.recalculate();
     return bill;
+  },
+
+  // Save a NEW bill: store it, move stock, and (if payMode is given) record it as paid in full
+  // with that payment method ('cash' | 'upi' | 'bank' | 'cheque'). Paid bills show in the day book.
+  finalize(bill, payMode) {
+    const saved = this.save(bill);
+    this.applyToInventory(saved);
+    if (payMode && saved.isFinal && saved.total > 0) {
+      PaymentService.recordPayment(saved.id, saved.total, payMode, '', 'Paid when billed');
+    }
+    return this.getById(saved.id) || saved;
   },
 
   // Apply bill to inventory (only sale/purchase bills move stock, not estimates/formulas)
@@ -531,5 +546,108 @@ export const BillParser = {
   // Parse a customer bill (sales invoice)
   parseCustomerBill(text) {
     return this.parseDealerBill(text); // same format, different type
+  },
+};
+// ============ Day Book ============
+// The shop's daily book: hand-entered work (car wash, puncture, ...) plus every payment made on a bill,
+// split into cash and online. Cash left in the counter at the end of a day (after taking cash home)
+// is the next day's starting cash.
+function dateKey(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+export const DayBookService = {
+  dateKey,
+  today() { return dateKey(new Date()); },
+
+  getEntries() {
+    return load(KEYS.dayEntries).map(d => new DayEntry(d));
+  },
+
+  addEntry(data) {
+    const entry = new DayEntry(data);
+    const all = load(KEYS.dayEntries);
+    all.push({ ...entry });
+    save(KEYS.dayEntries, all);
+    getFirebaseSync().then(({ push }) => { if (push) push('dayEntries', entry.id, { ...entry }); });
+    return entry;
+  },
+
+  deleteEntry(id) {
+    save(KEYS.dayEntries, load(KEYS.dayEntries).filter(e => e.id !== id));
+    getFirebaseSync().then(({ del }) => { if (del) del('dayEntries', id); });
+  },
+
+  // Per-day settings: cash taken home, and an optional hand-set starting cash
+  getDay(date) {
+    const found = load(KEYS.days).find(d => d.id === date) || {};
+    return { id: date, takenHome: 0, openingOverride: null, ...found };
+  },
+
+  saveDay(day) {
+    const days = load(KEYS.days);
+    const idx = days.findIndex(d => d.id === day.id);
+    if (idx >= 0) days[idx] = { ...day }; else days.push({ ...day });
+    save(KEYS.days, days);
+    getFirebaseSync().then(({ push }) => { if (push) push('days', day.id, { ...day }); });
+    return day;
+  },
+
+  // Every rupee that moved: day-book entries + bill payments (sale payments come in,
+  // purchase payments go out). Online = anything that is not cash (UPI, bank, cheque).
+  allTransactions() {
+    const out = this.getEntries().map(e => ({
+      id: e.id, date: e.date, time: e.createdAt, label: e.service, note: e.note,
+      amount: e.amount, mode: e.mode, direction: e.direction, source: 'manual',
+    }));
+    const bills = new Map(BillService.getAll().map(b => [b.id, b]));
+    for (const p of PaymentService.getAll()) {
+      const bill = bills.get(p.billId);
+      out.push({
+        id: p.id, date: dateKey(p.date), time: p.date,
+        label: bill ? `${bill.type === 'purchase' ? 'Purchase' : 'Tyre sale'} ${bill.billNumber}` : 'Bill payment',
+        note: bill ? (bill.partyName || 'Walk-in') : (p.partyName || ''),
+        amount: p.amount, mode: p.method === 'cash' ? 'cash' : 'online',
+        direction: bill && bill.type === 'purchase' ? 'out' : 'in',
+        source: 'bill', billId: p.billId,
+      });
+    }
+    return out;
+  },
+
+  getTransactions(date) {
+    return this.allTransactions()
+      .filter(t => t.date === date)
+      .sort((a, b) => new Date(a.time) - new Date(b.time));
+  },
+
+  // Walk every active day in order so each day's starting cash is the previous day's leftover
+  getSummary(date) {
+    const byDate = new Map();
+    for (const t of this.allTransactions()) {
+      if (!byDate.has(t.date)) byDate.set(t.date, []);
+      byDate.get(t.date).push(t);
+    }
+    const days = new Map(load(KEYS.days).map(d => [d.id, d]));
+    const dates = [...new Set([...byDate.keys(), ...days.keys(), date])].sort();
+    let carry = 0;
+    for (const d of dates) {
+      const day = days.get(d) || {};
+      const manual = day.openingOverride !== undefined && day.openingOverride !== null;
+      const opening = manual ? Number(day.openingOverride) : carry;
+      let cashIn = 0, cashOut = 0, onlineIn = 0, onlineOut = 0;
+      for (const t of byDate.get(d) || []) {
+        if (t.mode === 'cash') { if (t.direction === 'out') cashOut += t.amount; else cashIn += t.amount; }
+        else if (t.direction === 'out') onlineOut += t.amount; else onlineIn += t.amount;
+      }
+      const takenHome = Number(day.takenHome) || 0;
+      const counter = opening + cashIn - cashOut - takenHome;
+      if (d === date) {
+        return { date: d, opening, openingIsManual: manual, cashIn, cashOut, onlineIn, onlineOut, takenHome,
+          cashNet: cashIn - cashOut, onlineNet: onlineIn - onlineOut, counter };
+      }
+      carry = counter;
+    }
   },
 };

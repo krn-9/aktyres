@@ -17,8 +17,7 @@ service cloud.firestore {
     }
 
     match /{collection}/{docId} {
-      allow read, write: if isShopUser()
-        && collection in ['tyres', 'bills', 'payments', 'parties'];
+      allow read, write: if isShopUser();
     }
   }
 }

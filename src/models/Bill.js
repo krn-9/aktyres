@@ -28,6 +28,9 @@ export class Bill {
     this.items = (data.items || []).map(i => new BillItem(i));
     this.subtotal = data.subtotal || 0;
     this.tax = data.tax || 0;
+    this.gstEnabled = !!data.gstEnabled;      // GST is included in the item prices
+    this.gstRate = data.gstRate ?? 18;         // percent
+    this.gstAmount = data.gstAmount || 0;      // the GST part of the total (for display)
     this.total = data.total || 0;
     this.paid = data.paid || 0;
     this.balance = data.balance || 0;
@@ -55,6 +58,10 @@ export class Bill {
   recalculate() {
     this.subtotal = this.items.reduce((sum, item) => sum + item.total, 0);
     this.total = this.subtotal + (this.tax || 0);
+    const rate = Number(this.gstRate) || 0;
+    this.gstAmount = this.gstEnabled && rate > 0
+      ? Math.round((this.total - this.total / (1 + rate / 100)) * 100) / 100
+      : 0;
     this.balance = this.total - (this.paid || 0);
     if (this.balance <= 0 && this.total > 0) {
       this.status = 'paid';
