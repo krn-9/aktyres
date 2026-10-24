@@ -30,6 +30,7 @@ const KEYS = {
   dayEntries: 'tyre_shop_dayEntries',
   days: 'tyre_shop_days',
   config: 'tyre_shop_config',
+  incoming: 'tyre_shop_incomingPayments',
 };
 
 // Generic local storage helpers
@@ -773,9 +774,37 @@ export const DayBookService = {
     };
   },
 
+  // Payment notifications forwarded from the counter phone (see api/incoming.js)
+  getIncoming() {
+    return load(KEYS.incoming).filter(p => p && p.amount > 0)
+      .sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
+  },
+
+  // Which online payments already have a matching "received" notification. Worked out fresh each time
+  // from the data (nothing is stored): same amount, notification within 6 hours of the entry, closest first.
+  confirmations() {
+    const WINDOW = 6 * 60 * 60 * 1000;
+    const incoming = this.getIncoming();
+    const used = new Set();
+    const byTxn = {};
+    const online = this.allTransactions()
+      .filter(t => t.mode === 'online' && t.direction === 'in')
+      .sort((a, b) => new Date(a.time) - new Date(b.time));
+    for (const t of online) {
+      let best = null, bestGap = Infinity;
+      for (const p of incoming) {
+        if (used.has(p.id) || Math.abs(p.amount - t.amount) > 0.005) continue;
+        const gap = Math.abs(new Date(p.receivedAt) - new Date(t.time));
+        if (gap <= WINDOW && gap < bestGap) { best = p; bestGap = gap; }
+      }
+      if (best) { used.add(best.id); byTxn[t.id] = best; }
+    }
+    return { byTxn, unmatched: incoming.filter(p => !used.has(p.id)) };
+  },
+
   // Rows for the Excel download: one line per transaction (money out is negative), then totals
-  exportRows(txns) {
-    const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)']];
+  exportRows(txns, confirmed) {
+    const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)', 'Online payment']];
     let cash = 0, online = 0;
     for (const t of txns) {
       const v = t.direction === 'out' ? -t.amount : t.amount;
@@ -784,9 +813,10 @@ export const DayBookService = {
         t.date, new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), t.label, t.subject || '', t.note || '',
         t.direction === 'out' ? 'Paid out' : 'Received', t.mode === 'cash' ? 'Cash' : 'Online',
         t.mode === 'cash' ? v : '', t.mode === 'online' ? v : '', t.pendingLeft > 0 ? t.pendingLeft : '',
+        t.mode === 'online' && t.direction === 'in' && confirmed ? (confirmed.byTxn[t.id] ? 'Received ✓' : 'Waiting') : '',
       ]);
     }
-    rows.push(['', '', 'Total', '', '', '', '', cash, online, '']);
+    rows.push(['', '', 'Total', '', '', '', '', cash, online, '', '']);
     return rows;
   },
 

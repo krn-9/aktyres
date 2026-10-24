@@ -344,3 +344,8 @@ label.btn-primary { display: inline-block; text-align: center; border-radius: va
 .work-tile.active { border-color: var(--brand); background: var(--brand-soft); }
 .work-count { font-size: 1.9rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
 .work-name { font-weight: 600; }
+
+/* Online payment confirmation */
+.pill.ok { background: var(--green-soft); color: #0b7a55; }
+.pill.wait { background: var(--amber-soft); color: var(--amber); }
+.st-row.confirmed { background: linear-gradient(90deg, #eefaf4, transparent 70%); }

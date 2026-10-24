@@ -82,6 +82,7 @@ export default function DayBook({ navigate }) {
   const pendingEntries = DayBookService.pendingEntries();
   const bills = DayBookService.billBalances();
   const pendingTotal = pendingEntries.reduce((n, e) => n + e.pending, 0);
+  const confirmed = DayBookService.confirmations();   // online payments matched with a phone notification
   const customServices = DayBookService.getServices();
   const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];
   const knownServices = [...new Set([...PRESET_SERVICES, ...customServices, ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
@@ -187,7 +188,7 @@ export default function DayBook({ navigate }) {
       const XLSX = await import('xlsx');
       const report = DayBookService.getPeriodSummary(start, end, filter);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportRows(txns)), 'Transactions');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportRows(txns, confirmed)), 'Transactions');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportServiceRows(report)), 'By service');
       XLSX.writeFile(wb, `daybook-${view}-${start}${end !== start ? `_to_${end}` : ''}.xlsx`);
     } catch (err) {
@@ -234,7 +235,7 @@ export default function DayBook({ navigate }) {
           <div className="st-online">Online<br /><strong>{money(view === 'day' ? summary.onlineNet : period.onlineNet)}</strong></div>
         </div>
         {txns.map(t => (
-          <div className="st-row" role="row" key={t.id}>
+          <div className={`st-row ${t.mode === 'online' && t.direction === 'in' && confirmed.byTxn[t.id] ? 'confirmed' : ''}`} role="row" key={t.id}>
             <div className="st-details">
               <div className="st-title">
                 {t.source === 'manual' && (
@@ -244,6 +245,9 @@ export default function DayBook({ navigate }) {
                 {t.source === 'bill' && <button className="link" onClick={() => navigate(`/bills/${t.billId}`)}>view bill</button>}
                 {t.source === 'manual' && <button className="link" onClick={() => startEdit(t.entryId)}>edit</button>}
                 {t.source === 'manual' && t.pendingLeft > 0 && <span className="pill warn">₹{t.pendingLeft.toLocaleString('en-IN')} pending</span>}
+                {t.mode === 'online' && t.direction === 'in' && (confirmed.byTxn[t.id]
+                  ? <span className="pill ok" title={confirmed.byTxn[t.id].ref ? `UPI ref ${confirmed.byTxn[t.id].ref}` : 'Payment notification received'}>✓ Received</span>
+                  : <span className="pill wait" title="No payment notification has arrived for this yet">Waiting</span>)}
               </div>
               <div className="muted small">
                 {view !== 'day' ? `${parseKey(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ` : ''}
@@ -284,6 +288,31 @@ export default function DayBook({ navigate }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+
+  const dayStart = parseKey(date).getTime();
+  const todaysUnmatched = confirmed.unmatched.filter(p => {
+    const t = new Date(p.receivedAt).getTime();
+    return t >= dayStart && t < dayStart + 24 * 60 * 60 * 1000;
+  });
+  const prefillFromPayment = (p) => {
+    setEditingId(null);
+    setForm({ ...EMPTY_FORM, picked: ['Other'], amounts: { Other: String(p.amount) }, custom: '', mode: 'online', note: p.ref ? `UPI ${p.ref}` : '' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const phoneCard = view === 'day' && todaysUnmatched.length > 0 && (
+    <div className="card">
+      <h3>Received on the phone, not in the Day Book yet</h3>
+      {todaysUnmatched.map(p => (
+        <div className="pending-row" key={p.id}>
+          <div>
+            <div className="st-title">{money(p.amount)} <span className="pill ok">✓ Received</span></div>
+            <div className="muted small">{timeOf(p.receivedAt)}{p.app ? ` · ${p.app}` : ''}{p.ref ? ` · UPI ${p.ref}` : ''}</div>
+          </div>
+          <button className="btn-sm" onClick={() => prefillFromPayment(p)}>Add to Day Book</button>
+        </div>
+      ))}
     </div>
   );
 
@@ -443,6 +472,7 @@ export default function DayBook({ navigate }) {
           </div>
 
           {workCard}
+          {phoneCard}
           {pendingCard}
           <div className="card">
             <h3>Show only</h3>

@@ -458,6 +458,14 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download Excel button for whatever is on screen.
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
+## Online payment confirmation (PhonePe / PayZapp)
+Online entries in the Day Book show amber **Waiting** until a payment notification for the same amount arrives, then turn green **✓ Received**.
+- The counter phone forwards each "payment received" notification (free automation app, e.g. MacroDroid) to `POST /api/incoming?app=phonepe` (Vercel function `api/incoming.js`, body = notification text).
+- `src/services/paymentParser.js` reads the amount and UPI reference; settlements, debits, refunds and failures are ignored.
+- Matching (`DayBookService.confirmations`): same amount, notification within 6 hours of the entry, closest first, one notification confirms one payment. Nothing is stored for the match.
+- Optional: set the `INCOMING_KEY` environment variable in Vercel and add `&key=...` to the phone's URL so only your phone can post.
+- Payments seen on the phone but not in the book are listed in the Day Book ("Received on the phone, not in the Day Book yet").
+
 ## Bills: GST and payment
 - Bills are created under Bills (Sale / Purchase). The chatbot was removed.
 - A new bill is marked paid by default (cash, UPI, bank or cheque); untick it to save an unpaid bill. See `BillService.finalize`.
