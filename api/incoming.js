@@ -9,7 +9,14 @@ const PROJECT = 'aktyres-billbook';
 function textFrom(req) {
   const body = req.body;
   if (typeof body === 'string') return body;
-  if (body && typeof body === 'object') return body.text || body.message || body.body || '';
+  if (Buffer.isBuffer(body)) return body.toString('utf8');
+  if (body && typeof body === 'object') {
+    const named = body.text || body.message || body.body;
+    if (named) return named;
+    // A raw message sent as a plain form post arrives as the only key of the body
+    const keys = Object.keys(body);
+    if (keys.length === 1 && !body[keys[0]]) return keys[0];
+  }
   return (req.query && req.query.text) || '';
 }
 
