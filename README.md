@@ -455,7 +455,7 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Payments recorded on bills appear automatically (sale payments come in, purchase payments go out). UPI, bank and cheque count as online.
 - Cash taken home is entered at the end of the day (`days` collection). What is left in the counter becomes the next day's starting cash; it can be changed by hand.
 - Several services can be added at once for one customer (each with its own amount). Entries can be part-paid (the rest stays pending until collected) and edited. Services can be added from the page (stored in the `config` collection).
-- Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download Excel button for whatever is on screen.
+- Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download PDF button for whatever is on screen (statement, totals and a by-service table; `src/exportPdf.js`).
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
 ## Dashboard (work done)

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { DayBookService } from './services/dataService';
+import { DayBookService, SettingsService } from './services/dataService';
+import { buildDayBookPdf } from './exportPdf';
 import { parseKey, shiftDate, periodRange, shiftPeriod, periodLabel } from './periods';
 
 const PRESET_SERVICES = ['Car wash', 'Bike wash', 'Body wash', 'Puncture', 'Air', 'Nitrogen', 'Tyre fitting', 'Tyre sale', 'Alignment', 'Balancing'];
@@ -144,17 +145,23 @@ export default function DayBook({ navigate }) {
     setHomeInput(null);
   };
 
-  // Download what is on screen (this day / week / month / year, and the selected services) as an Excel file
-  const exportExcel = async () => {
+  // Download what is on screen (this day / week / month / year, and the selected services) as a PDF
+  const exportPdf = async () => {
     try {
-      const XLSX = await import('xlsx');
       const report = DayBookService.getPeriodSummary(start, end, filter);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportRows(txns, confirmed)), 'Transactions');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportServiceRows(report)), 'By service');
-      XLSX.writeFile(wb, `daybook-${view}-${start}${end !== start ? `_to_${end}` : ''}.xlsx`);
+      const net = (mode) => txns.reduce((n, t) => n + (t.mode === mode ? (t.direction === 'out' ? -t.amount : t.amount) : 0), 0);
+      const doc = await buildDayBookPdf({
+        shopName: SettingsService.get().shopName,
+        title: 'Day Book',
+        subtitle: periodLabel(view, date),
+        filterLabel: filter.length ? `Only: ${filter.join(', ')}` : '',
+        txns, confirmed, showDate: view !== 'day',
+        cashTotal: net('cash'), onlineTotal: net('online'),
+        serviceRows: DayBookService.exportServiceRows(report),
+      });
+      doc.save(`daybook-${view}-${start}${end !== start ? `_to_${end}` : ''}.pdf`);
     } catch (err) {
-      alert('Could not create the file: ' + (err.message || 'unknown error'));
+      alert('Could not create the PDF: ' + (err.message || 'unknown error'));
     }
   };
 
@@ -180,7 +187,7 @@ export default function DayBook({ navigate }) {
         <div className="muted">{txns.length} {txns.length === 1 ? 'entry' : 'entries'}{filter.length ? ` · ${filter.join(', ')}` : ''}</div>
       </div>
       <div className="actions-row" style={{ marginTop: 0, marginBottom: 6 }}>
-        <button className="btn-sm" onClick={exportExcel} disabled={txns.length === 0}>⬇ Download Excel</button>
+        <button className="btn-sm" onClick={exportPdf} disabled={txns.length === 0}>⬇ Download PDF</button>
       </div>
       <div className="bulk-bar">
         <label className="check-row small">
