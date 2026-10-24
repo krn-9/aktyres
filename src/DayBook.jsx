@@ -338,7 +338,7 @@ export default function DayBook({ navigate }) {
           <div className="muted">{periodLabel(view, date)}{view === 'day' && isToday ? ' · Today' : ''}</div>
         </div>
         <div className="date-nav">
-          <div className="segmented" role="group" aria-label="Period">
+          <div className="segmented tabs" role="group" aria-label="Period">
             {['day', 'week', 'month', 'year'].map(v => (
               <button key={v} className={view === v ? 'active' : ''} onClick={() => changeView(v)}>{v[0].toUpperCase() + v.slice(1)}</button>
             ))}

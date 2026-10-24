@@ -199,43 +199,41 @@ function SyncBanner({ status, onRetry }) {
     : `⏳ Syncing… ${status.pending > 0 ? `${status.pending} change${status.pending === 1 ? '' : 's'} waiting to upload.` : 'Uploading this device\'s data.'}`;
   return (
     <div role="status" style={{
-      background: isProblem ? '#fff3cd' : '#e7f1ff', color: isProblem ? '#664d03' : '#084298',
-      padding: '8px 16px', fontSize: '0.85rem', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+      background: isProblem ? 'var(--warning-soft)' : 'var(--primary-soft)', color: isProblem ? 'var(--warning-text)' : 'var(--primary-active)',
+      borderBottom: '1px solid var(--hairline)', padding: '12px 32px', fontSize: 14, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
     }}>
       <span>{text}</span>
-      <button onClick={onRetry} style={{ padding: '2px 10px', cursor: 'pointer' }}>Try now</button>
+      <button className="btn-sm" onClick={onRetry}>Try now</button>
     </div>
   );
 }
 
 // ============ Navbar ============
 function Navbar({ navigate, route, settings, user, onSignOut }) {
+  const [open, setOpen] = useState(false);   // the menu on small screens
   const links = [
-    { path: '/', label: '📒 Day Book' },
-    { path: '/overview', label: '📊 Overview' },
-    { path: '/inventory', label: '🛞 Inventory' },
-    { path: '/bills', label: '🧾 Bills' },
-    { path: '/scan', label: '📷 Scan' },
-    { path: '/payments', label: '💰 Payments' },
-    { path: '/parties', label: '👥 Parties' },
+    { path: '/', label: 'Day Book' },
+    { path: '/overview', label: 'Overview' },
+    { path: '/inventory', label: 'Inventory' },
+    { path: '/bills', label: 'Bills' },
+    { path: '/scan', label: 'Scan' },
+    { path: '/payments', label: 'Payments' },
+    { path: '/parties', label: 'Parties' },
   ];
   return (
     <nav className="navbar">
       <div className="navbar-brand">
         <span className="brand-icon">🛞</span>
         <span className="brand-name">{settings.shopName}</span>
-        {user && <span style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: 8 }}>{user.email}</span>}
+        {user && <span className="muted small" style={{ marginLeft: 8 }}>{user.email}</span>}
       </div>
-      <div className="navbar-links">
+      <button className="nav-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Close' : 'Menu'}</button>
+      <div className={`navbar-links ${open ? 'open' : ''}`}>
         {links.map(l => (
           <button key={l.path} className={`nav-btn ${route === l.path ? 'active' : ''}`}
-            onClick={() => navigate(l.path)}>{l.label}</button>
+            onClick={() => { setOpen(false); navigate(l.path); }}>{l.label}</button>
         ))}
-        {user && (
-          <button className="nav-btn" onClick={onSignOut} style={{ background: '#e94560', borderColor: '#e94560' }}>
-            🚪 Sign Out
-          </button>
-        )}
+        {user && <button className="nav-btn" onClick={onSignOut}>Sign out</button>}
       </div>
     </nav>
   );
@@ -441,9 +439,9 @@ function Inventory({ navigate, params }) {
       </div>
       {filtered.length === 0 && <p className="empty-state">No tyres found. Add your first tyre or import from Excel/CSV!</p>}
 
-      <div style={{ marginTop: 20, padding: 12, background: '#f8f9fa', borderRadius: 8, fontSize: '0.85rem' }}>
+      <div className="card" style={{ fontSize: 14 }}>
         <strong>📥 Import format:</strong> Upload .xlsx, .xls, or .csv with columns:
-        <code style={{ background: '#e9ecef', padding: '2px 6px', borderRadius: 4, marginLeft: 6 }}>
+        <code style={{ background: 'var(--surface-strong)', padding: '2px 6px', marginLeft: 6 }}>
           Brand, Model, Size, Type, CostPrice, SellingPrice, Quantity, MinStock
         </code>
         <br />
@@ -454,7 +452,7 @@ function Inventory({ navigate, params }) {
           const a = document.createElement('a');
           a.href = url; a.download = 'tyre_template.csv'; a.click();
           URL.revokeObjectURL(url);
-        }} style={{ marginTop: 8, background: 'none', border: '1px solid #ddd', padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}>
+        }} className="btn-sm" style={{ marginTop: 8 }}>
           ⬇️ Download Sample CSV Template
         </button>
       </div>
@@ -628,7 +626,7 @@ function BillDetail({ navigate, billId }) {
       )}
       <div className="form-actions">
         {bill.isFinal && bill.balance > 0 && <button onClick={() => { setPayOpen(!payOpen); setPayAmount(String(bill.balance)); }} className="btn-primary">Record Payment</button>}
-        <button onClick={() => navigate(`/bills/edit/${bill.id}`)} style={{ background: '#007bff', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer' }}>Edit Bill</button>
+        <button onClick={() => navigate(`/bills/edit/${bill.id}`)} >Edit Bill</button>
         <button onClick={handleDelete} className="btn-danger">Delete Bill</button>
       </div>
     </div>
@@ -1230,7 +1228,7 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="page" style={{ maxWidth: 400, margin: '60px auto' }}>
       <h1>🛞 Tyre Shop Manager</h1>
-      <p style={{ color: '#666', marginBottom: 20 }}>Sign in to sync across devices</p>
+      <p className="muted" style={{ marginBottom: 20 }}>Sign in to sync across devices</p>
       <form className="form" onSubmit={handleSubmit}>
         <div className="form-row">
           <label>Email</label>
@@ -1246,7 +1244,7 @@ function LoginScreen({ onLogin }) {
             {loading ? 'Please wait...' : 'Sign In'}
           </button>
         </div>
-        <p style={{ textAlign: 'center', marginTop: 12, fontSize: '0.9rem', color: '#666' }}>
+        <p className="muted" style={{ textAlign: 'center', marginTop: 12 }}>
           Need access? Ask the shop owner to create your account.
         </p>
       </form>
