@@ -699,7 +699,9 @@ export const DayBookService = {
 
   // Every rupee that moved: day-book entries + bill payments (sale payments come in,
   // purchase payments go out). Online = anything that is not cash (UPI, bank, cheque).
-  allTransactions() {
+  // includePhone: also list payment notifications from the counter phone that nobody has entered yet.
+  // They count as online money received, and disappear (replaced by the real entry) once it is entered.
+  allTransactions(includePhone = true) {
     const out = [];
     for (const e of this.getEntries()) {
       for (const r of e.receipts) {
@@ -722,6 +724,16 @@ export const DayBookService = {
         amount: p.amount, mode: p.method === 'cash' ? 'cash' : 'online',
         direction: purchase ? 'out' : 'in', source: 'bill', billId: p.billId,
       });
+    }
+    if (includePhone) {
+      for (const p of this.confirmations().unmatched) {
+        out.push({
+          id: `phone-${p.id}`, phoneId: p.id, date: dateKey(p.receivedAt), time: p.receivedAt,
+          service: 'Online payment', label: 'Online payment',
+          subject: '', note: [p.app, p.ref ? `UPI ${p.ref}` : ''].filter(Boolean).join(' · '),
+          amount: p.amount, mode: 'online', direction: 'in', source: 'phone', ref: p.ref, app: p.app,
+        });
+      }
     }
     return out;
   },
@@ -748,6 +760,7 @@ export const DayBookService = {
       const row = byService[t.service] || (byService[t.service] = blank());
       row.count++; row[field] += t.amount;
       if (t.source === 'bill') (billsSeen[t.service] || (billsSeen[t.service] = new Set())).add(t.billId);
+      if (t.source === 'phone') { row.jobs++; row.amount += t.amount; }
       const day = byDay[t.date] || (byDay[t.date] = { cash: 0, online: 0 });
       const signed = t.direction === 'out' ? -t.amount : t.amount;
       day[t.mode === 'cash' ? 'cash' : 'online'] += signed;
@@ -787,7 +800,7 @@ export const DayBookService = {
     const incoming = this.getIncoming();
     const used = new Set();
     const byTxn = {};
-    const online = this.allTransactions()
+    const online = this.allTransactions(false)
       .filter(t => t.mode === 'online' && t.direction === 'in')
       .sort((a, b) => new Date(a.time) - new Date(b.time));
     for (const t of online) {
@@ -813,7 +826,7 @@ export const DayBookService = {
         t.date, new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), t.label, t.subject || '', t.note || '',
         t.direction === 'out' ? 'Paid out' : 'Received', t.mode === 'cash' ? 'Cash' : 'Online',
         t.mode === 'cash' ? v : '', t.mode === 'online' ? v : '', t.pendingLeft > 0 ? t.pendingLeft : '',
-        t.mode === 'online' && t.direction === 'in' && confirmed ? (confirmed.byTxn[t.id] ? 'Received ✓' : 'Waiting') : '',
+        t.mode === 'online' && t.direction === 'in' && confirmed ? (t.source === 'phone' ? 'Received ✓ (from phone)' : confirmed.byTxn[t.id] ? 'Received ✓' : 'Waiting') : '',
       ]);
     }
     rows.push(['', '', 'Total', '', '', '', '', cash, online, '', '']);

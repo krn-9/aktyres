@@ -464,7 +464,7 @@ Online entries in the Day Book show amber **Waiting** until a payment notificati
 - `src/services/paymentParser.js` reads the amount and UPI reference; settlements, debits, refunds and failures are ignored.
 - Matching (`DayBookService.confirmations`): same amount, notification within 6 hours of the entry, closest first, one notification confirms one payment. Nothing is stored for the match.
 - Optional: set the `INCOMING_KEY` environment variable in Vercel and add `&key=...` to the phone's URL so only your phone can post.
-- Payments seen on the phone but not in the book are listed in the Day Book ("Received on the phone, not in the Day Book yet").
+- Every payment that arrives on the phone becomes a green "Online payment" row in the Day Book by itself and counts as online money received. If someone also enters it (same amount, same few hours), the entry replaces that row and the payment is not counted twice. "add details" on the row pre-fills an entry so a service can be chosen.
 
 ## Bills: GST and payment
 - Bills are created under Bills (Sale / Purchase). The chatbot was removed.
