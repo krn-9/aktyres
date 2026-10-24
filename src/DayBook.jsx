@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DayBookService } from './services/dataService';
 
-const SERVICES = ['Car wash', 'Bike wash', 'Body wash', 'Puncture', 'Air', 'Nitrogen', 'Tyre fitting', 'Tyre sale', 'Alignment', 'Balancing', 'Other'];
+const PRESET_SERVICES = ['Car wash', 'Bike wash', 'Body wash', 'Puncture', 'Air', 'Nitrogen', 'Tyre fitting', 'Tyre sale', 'Alignment', 'Balancing'];
 // Subjects (what an entry is about) will be added later. Until then it is a free-text field that
 // suggests the subjects already typed. Put fixed choices here when they are decided.
 const SUBJECT_OPTIONS = [];
@@ -46,7 +46,7 @@ function periodLabel(view, key) {
   return String(s.getFullYear());
 }
 
-const EMPTY_FORM = { service: 'Car wash', custom: '', amount: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '' };
+const EMPTY_FORM = { picked: ['Car wash'], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '' };
 
 // The shop's daily book: cash in the counter, work done, how each payment arrived, what is pending,
 // plus week / month / year reports and a per-service report
@@ -82,20 +82,39 @@ export default function DayBook({ navigate }) {
   const pendingEntries = DayBookService.pendingEntries();
   const bills = DayBookService.billBalances();
   const pendingTotal = pendingEntries.reduce((n, e) => n + e.pending, 0);
-  const knownServices = [...new Set([...SERVICES.filter(s => s !== 'Other'), ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
+  const customServices = DayBookService.getServices();
+  const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];
+  const knownServices = [...new Set([...PRESET_SERVICES, ...customServices, ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
+  const formTotal = form.picked.reduce((n, name) => n + (parseFloat(form.amounts[name]) || 0), 0);
+  const dayReport = view === 'day' ? DayBookService.getPeriodSummary(date, date) : null;
   const subjectSuggestions = [...new Set([...SUBJECT_OPTIONS, ...DayBookService.getEntries().map(e => e.subject).filter(Boolean)])];
 
   // ---------- add / edit ----------
+  // Several services can be picked at once; each gets its own amount and becomes its own entry
+  const pickService = (name) => setForm(f => {
+    if (editingId) return { ...f, picked: [name] };
+    return { ...f, picked: f.picked.includes(name) ? f.picked.filter(x => x !== name) : [...f.picked, name] };
+  });
+  const setAmount = (name, value) => setForm(f => ({ ...f, amounts: { ...f.amounts, [name]: value } }));
+
   const submitEntry = (e) => {
     e.preventDefault();
-    const total = parseFloat(form.amount);
-    if (!(total > 0)) { alert('Enter the amount'); return; }
-    const name = form.service === 'Other' ? (form.custom.trim() || 'Other') : form.service;
-    const received = form.full ? total : (parseFloat(form.received) || 0);
-    if (received > total) { alert('Received cannot be more than the amount'); return; }
-    const data = { date: editingId ? undefined : date, service: name, amount: total, received, mode: form.mode, direction: form.direction, subject: form.subject.trim(), note: form.note.trim() };
-    if (editingId) DayBookService.updateEntry(editingId, { ...data, date: undefined });
-    else DayBookService.addEntry(data);
+    const lines = form.picked.map(name => ({
+      name: name === 'Other' ? (form.custom.trim() || 'Other') : name,
+      amount: parseFloat(form.amounts[name]),
+    }));
+    if (lines.length === 0) { alert('Pick at least one service'); return; }
+    if (lines.some(l => !(l.amount > 0))) { alert('Enter the amount for every selected service'); return; }
+    const total = lines.reduce((n, l) => n + l.amount, 0);
+    let left = form.full ? total : (parseFloat(form.received) || 0);
+    if (left > total) { alert('Received cannot be more than the total'); return; }
+    for (const l of lines) {
+      const got = Math.min(left, l.amount);   // money received is used up service by service, in order
+      left -= got;
+      const data = { service: l.name, amount: l.amount, received: got, mode: form.mode, direction: form.direction, subject: form.subject.trim(), note: form.note.trim() };
+      if (editingId) DayBookService.updateEntry(editingId, data);
+      else DayBookService.addEntry({ ...data, date });
+    }
     setEditingId(null);
     setForm(EMPTY_FORM);
   };
@@ -103,11 +122,12 @@ export default function DayBook({ navigate }) {
   const startEdit = (id) => {
     const entry = DayBookService.getEntries().find(x => x.id === id);
     if (!entry) return;
-    const known = SERVICES.includes(entry.service);
+    const known = formServices.includes(entry.service);
+    const key = known ? entry.service : 'Other';
     setEditingId(id);
     setForm({
-      service: known ? entry.service : 'Other', custom: known ? '' : entry.service,
-      amount: String(entry.amount), full: entry.pending === 0, received: String(entry.received),
+      picked: [key], amounts: { [key]: String(entry.amount) }, custom: known ? '' : entry.service,
+      full: entry.pending === 0, received: String(entry.received),
       mode: entry.receipts[0]?.mode || 'cash', direction: entry.direction, subject: entry.subject, note: entry.note,
     });
     if (view !== 'day') changeView('day');
@@ -136,6 +156,13 @@ export default function DayBook({ navigate }) {
     DayBookService.collect(entry.id, value, mode);
   };
 
+  const addServiceName = () => {
+    const name = prompt('Name of the new service:');
+    if (name === null) return;
+    if (!name.trim()) { alert('Enter a name'); return; }
+    if (!DayBookService.addService(name)) alert('That service already exists');
+  };
+
   const togglePick = (id) => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
 
   // ---------- counter cash ----------
@@ -154,6 +181,20 @@ export default function DayBook({ navigate }) {
     setHomeInput(null);
   };
 
+  // Download what is on screen (this day / week / month / year, and the selected services) as an Excel file
+  const exportExcel = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const report = DayBookService.getPeriodSummary(start, end, filter);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportRows(txns)), 'Transactions');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(DayBookService.exportServiceRows(report)), 'By service');
+      XLSX.writeFile(wb, `daybook-${view}-${start}${end !== start ? `_to_${end}` : ''}.xlsx`);
+    } catch (err) {
+      alert('Could not create the file: ' + (err.message || 'unknown error'));
+    }
+  };
+
   const signed = (t) => (t.direction === 'out' ? `− ${money(t.amount)}` : `+ ${money(t.amount)}`);
   const manualIds = txns.filter(t => t.source === 'manual').map(t => t.entryId);
   const allPicked = manualIds.length > 0 && manualIds.every(id => picked.includes(id));
@@ -164,6 +205,7 @@ export default function DayBook({ navigate }) {
       {knownServices.map(s => (
         <button type="button" key={s} className={`chip ${filter.includes(s) ? 'active' : ''}`} onClick={() => toggleService(s)}>{s}</button>
       ))}
+      <button type="button" className="chip ghost" onClick={addServiceName}>+ Add service</button>
       {filter.length > 0 && <button type="button" className="chip ghost" onClick={() => setFilter([])}>Clear ✕</button>}
     </div>
   );
@@ -173,6 +215,9 @@ export default function DayBook({ navigate }) {
       <div className="statement-head">
         <h3>{view === 'day' ? 'Statement' : 'Entries in this period'}</h3>
         <div className="muted">{txns.length} {txns.length === 1 ? 'entry' : 'entries'}{filter.length ? ` · ${filter.join(', ')}` : ''}</div>
+      </div>
+      <div className="actions-row" style={{ marginTop: 0, marginBottom: 6 }}>
+        <button className="btn-sm" onClick={exportExcel} disabled={txns.length === 0}>⬇ Download Excel</button>
       </div>
       <div className="bulk-bar">
         <label className="check-row small">
@@ -218,6 +263,26 @@ export default function DayBook({ navigate }) {
           <div className="st-cash"><strong>{money(txns.reduce((n, t) => n + (t.mode === 'cash' ? (t.direction === 'out' ? -t.amount : t.amount) : 0), 0))}</strong></div>
           <div className="st-online"><strong>{money(txns.reduce((n, t) => n + (t.mode === 'online' ? (t.direction === 'out' ? -t.amount : t.amount) : 0), 0))}</strong></div>
         </div>
+      </div>
+    </div>
+  );
+
+  const workRows = dayReport
+    ? Object.entries(dayReport.byService).filter(([, r]) => r.jobs > 0).sort((a, b) => b[1].jobs - a[1].jobs)
+    : [];
+  const workCard = view === 'day' && (
+    <div className="card">
+      <h3>Work done {isToday ? 'today' : 'on this day'} <span className="muted small">(tap one to show just that)</span></h3>
+      {workRows.length === 0 && <div className="muted">No work recorded yet.</div>}
+      <div className="work-tiles">
+        {workRows.map(([name, r]) => (
+          <button key={name} className={`work-tile ${filter.includes(name) ? 'active' : ''}`} onClick={() => toggleService(name)}>
+            <div className="work-count">{r.jobs}</div>
+            <div className="work-name">{name}</div>
+            <div className="muted small">{money(r.amount)} · cash {money(r.cashIn - r.cashOut)} · online {money(r.onlineIn - r.onlineOut)}</div>
+            {r.pending > 0 && <div className="pill warn" style={{ marginLeft: 0 }}>{money(r.pending)} pending</div>}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -298,20 +363,25 @@ export default function DayBook({ navigate }) {
             <form className="card" onSubmit={submitEntry}>
               <h3>{editingId ? 'Edit entry' : 'Add work / payment'}</h3>
               <div className="chips">
-                {SERVICES.map(s => (
-                  <button type="button" key={s} className={`chip ${form.service === s ? 'active' : ''}`} onClick={() => setField({ service: s })}>{s}</button>
+                {formServices.map(s => (
+                  <button type="button" key={s} className={`chip ${form.picked.includes(s) ? 'active' : ''}`} onClick={() => pickService(s)}>{s}</button>
                 ))}
+                <button type="button" className="chip ghost" onClick={addServiceName}>+ Add service</button>
               </div>
-              {form.service === 'Other' && (
+              {!editingId && <div className="hint" style={{ marginTop: -6, marginBottom: 10 }}>Tap more than one if the customer took several services.</div>}
+              {form.picked.includes('Other') && (
                 <div className="form-row">
                   <label>What was it?</label>
                   <input value={form.custom} onChange={e => setField({ custom: e.target.value })} placeholder="e.g. valve, tube, tea" />
                 </div>
               )}
-              <div className="form-row">
-                <label>Amount (₹)</label>
-                <input type="number" inputMode="decimal" min="0" value={form.amount} onChange={e => setField({ amount: e.target.value })} placeholder="300" />
-              </div>
+              {form.picked.map(name => (
+                <div className="form-row" key={name}>
+                  <label>{name === 'Other' ? (form.custom.trim() || 'Other') : name} (₹)</label>
+                  <input type="number" inputMode="decimal" min="0" value={form.amounts[name] || ''} onChange={e => setAmount(name, e.target.value)} placeholder="300" />
+                </div>
+              ))}
+              {form.picked.length > 1 && <div className="kv"><span>Total</span><strong>{money(formTotal)}</strong></div>}
               <label className="check-row">
                 <input type="checkbox" checked={form.full} onChange={e => setField({ full: e.target.checked })} />
                 <span>{form.direction === 'out' ? 'Paid in full' : 'Received in full'}</span>
@@ -320,7 +390,7 @@ export default function DayBook({ navigate }) {
                 <div className="form-row">
                   <label>{form.direction === 'out' ? 'Paid now (₹)' : 'Received now (₹)'}, the rest stays pending</label>
                   <input type="number" inputMode="decimal" min="0" value={form.received} onChange={e => setField({ received: e.target.value })} placeholder="0" />
-                  <div className="hint">Pending: {money(Math.max((parseFloat(form.amount) || 0) - (parseFloat(form.received) || 0), 0))}</div>
+                  <div className="hint">Pending: {money(Math.max(formTotal - (parseFloat(form.received) || 0), 0))}</div>
                 </div>
               )}
               <div className="toggle-row">
@@ -372,6 +442,7 @@ export default function DayBook({ navigate }) {
             </div>
           </div>
 
+          {workCard}
           {pendingCard}
           <div className="card">
             <h3>Show only</h3>
@@ -403,11 +474,11 @@ export default function DayBook({ navigate }) {
             <h3>By service <span className="muted small">(tap one or more to see just those)</span></h3>
             {serviceChips}
             <div className="service-table">
-              <div className="svc-row svc-head"><div>Service</div><div>Entries</div><div>Cash</div><div>Online</div><div>Total</div><div>Pending</div></div>
+              <div className="svc-row svc-head"><div>Service</div><div>Jobs</div><div>Cash</div><div>Online</div><div>Total</div><div>Pending</div></div>
               {Object.entries(period.byService).sort((a, b) => (b[1].cashIn + b[1].onlineIn) - (a[1].cashIn + a[1].onlineIn)).map(([name, r]) => (
                 <div key={name} className={`svc-row ${filter.includes(name) ? 'sel' : ''}`} onClick={() => toggleService(name)}>
                   <div><strong>{name}</strong></div>
-                  <div>{r.count}</div>
+                  <div>{r.jobs}</div>
                   <div>{money(r.cashIn - r.cashOut)}</div>
                   <div>{money(r.onlineIn - r.onlineOut)}</div>
                   <div><strong>{money(r.cashIn + r.onlineIn - r.cashOut - r.onlineOut)}</strong></div>

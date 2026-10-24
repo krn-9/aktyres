@@ -16,7 +16,6 @@
 8. [Firebase Integration](#firebase-integration)
 9. [Real-Time Sync Architecture](#real-time-sync-architecture)
 10. [OCR & Scanning](#ocr--scanning)
-11. [Chatbot Flow](#chatbot-flow)
 12. [Excel/CSV Import](#excelcsv-import)
 13. [PWA Configuration](#pwa-configuration)
 14. [Deployment](#deployment)
@@ -33,7 +32,6 @@ A tyre business management web app (PWA) for Android + Web. Tracks inventory, bi
 - Inventory management (tyres by brand, size, type, cost/sell price, quantity)
 - Bill creation (sale, purchase, estimate, formula)
 - Bill scanning via OCR (paper bills + tyre labels)
-- Chatbot-style bill creation (step-by-step conversational)
 - Payment tracking against bills
 - Party management (customers & dealers)
 - Excel/CSV inventory import
@@ -328,7 +326,6 @@ All components are in `src/App.jsx` (single file, ~1200 lines).
 | `BillDetail` | `/bills/:id` | Single bill view with edit, delete, payment |
 | `BillForm` | `/bills/new`, `/bills/purchase`, `/bills/edit/:id` | Create/edit bill with items |
 | `Scanner` | `/scan` | OCR scan (image/PDF) + manual text input |
-| `Chatbot` | `/chatbot` | Step-by-step conversational bill creation |
 | `Payments` | `/payments` | Payment list + record payment form |
 | `Parties` | `/parties` | Party list with add/edit/delete |
 | `LoginScreen` | (shown when not authenticated) | Firebase email/password login |
@@ -354,7 +351,6 @@ Hash-based routing (no react-router). `useRoute()` hook reads `window.location.h
 /bills/edit/:id       → BillForm (edit)
 /bills/:id            → BillDetail
 /scan                 → Scanner
-/chatbot              → Chatbot
 /payments             → Payments
 /parties              → Parties
 ```
@@ -458,47 +454,14 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Work done (car wash, puncture, air, nitrogen, tyre sale, alignment, balancing, other) is added with an amount and cash/online. Data: `dayEntries` collection (`src/models/DayEntry.js`).
 - Payments recorded on bills appear automatically (sale payments come in, purchase payments go out). UPI, bank and cheque count as online.
 - Cash taken home is entered at the end of the day (`days` collection). What is left in the counter becomes the next day's starting cash; it can be changed by hand.
+- Several services can be added at once for one customer (each with its own amount). Entries can be part-paid (the rest stays pending until collected) and edited. Services can be added from the page (stored in the `config` collection).
+- Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download Excel button for whatever is on screen.
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
 ## Bills: GST and payment
-- Bills are created under Bills (Sale / Purchase). The Chatbot is a separate, optional way to create one.
+- Bills are created under Bills (Sale / Purchase). The chatbot was removed.
 - A new bill is marked paid by default (cash, UPI, bank or cheque); untick it to save an unpaid bill. See `BillService.finalize`.
 - GST: prices already include GST; the bill shows the GST part (default 18%, editable).
-
-## Chatbot Flow
-
-Step-by-step conversational bill creation using state machine:
-
-```
-idle → name → phone → size → brand → tyreName → manufacturer → qty → rate → type → confirm → (create bill) → idle
-```
-
-| Step | Question | Input | Stored in |
-|---|---|---|---|
-| idle | "Type start to begin" | "start" | — |
-| name | "Customer name?" | text | billData.partyName |
-| phone | "Phone? (optional)" | text or "skip" | billData.partyPhone |
-| size | "Tyre size?" | text (uppercased) | billData.size |
-| brand | "Brand?" | text | billData.brand |
-| tyreName | "Tyre model? (optional)" | text or "skip" | billData.tyreName |
-| manufacturer | "Manufacturer? (optional)" | text or "skip" | billData.manufacturer |
-| qty | "Quantity?" | number | billData.quantity |
-| rate | "Rate per tyre?" | number | billData.rate |
-| type | "Bill type?" | sale/purchase/estimate | billData.type |
-| confirm | Shows summary | "yes"/"no" | Creates bill |
-
-**Uses `useRef` for billData** to avoid stale closure bugs.
-
-On confirm "yes":
-1. Creates `Tyre` object (brand, model=tyreName, size, sellingPrice=rate)
-2. Creates `Bill` object (type, partyName, partyPhone)
-3. `bill.addItem(tyre, quantity, rate)`
-4. `bill.recalculate()`
-5. `BillService.save(bill)` → generates bill number
-6. `BillService.applyToInventory(bill)` → updates tyre stock
-7. Shows success message with bill number and total
-
----
 
 ## Excel/CSV Import
 

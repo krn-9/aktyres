@@ -337,3 +337,10 @@ label.btn-primary { display: inline-block; text-align: center; border-radius: va
 .bar-online { background: var(--blue); }
 .bar-label { font-size: .62rem; color: var(--ink-3); margin-top: 4px; }
 .date-nav { flex-wrap: wrap; }
+
+/* Work done tiles */
+.work-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.work-tile { text-align: left; padding: 14px; border-radius: var(--radius); display: flex; flex-direction: column; gap: 2px; background: #fafbfd; }
+.work-tile.active { border-color: var(--brand); background: var(--brand-soft); }
+.work-count { font-size: 1.9rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+.work-name { font-weight: 600; }

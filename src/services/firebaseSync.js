@@ -4,7 +4,7 @@ let db = null;
 let auth = null;
 let syncEnabled = false;
 
-const COLLECTIONS = ['tyres', 'bills', 'payments', 'parties', 'dayEntries', 'days'];
+const COLLECTIONS = ['tyres', 'bills', 'payments', 'parties', 'dayEntries', 'days', 'config'];
 const PENDING_KEY = 'tyre_shop_pending';
 const SEEDED_KEY = 'tyre_shop_seeded_v1';
 const FLUSH_TIMEOUT_MS = 5000;

@@ -29,6 +29,7 @@ const KEYS = {
   settings: 'tyre_shop_settings',
   dayEntries: 'tyre_shop_dayEntries',
   days: 'tyre_shop_days',
+  config: 'tyre_shop_config',
 };
 
 // Generic local storage helpers
@@ -641,6 +642,25 @@ export const DayBookService = {
     getFirebaseSync().then(({ del }) => { if (del) del('dayEntries', id); });
   },
 
+  // Services added by the shop (shown next to the built-in ones)
+  getServices() {
+    const doc = load(KEYS.config).find(d => d.id === 'services');
+    return doc && Array.isArray(doc.list) ? doc.list : [];
+  },
+
+  addService(name) {
+    const clean = (name || '').trim();
+    if (!clean) return false;
+    const list = this.getServices();
+    if (list.some(x => x.toLowerCase() === clean.toLowerCase())) return false;
+    const doc = { id: 'services', list: [...list, clean] };
+    const all = load(KEYS.config).filter(d => d.id !== 'services');
+    all.push(doc);
+    save(KEYS.config, all);
+    getFirebaseSync().then(({ push }) => { if (push) push('config', 'services', doc); });
+    return true;
+  },
+
   deleteEntries(ids) {
     ids.forEach(id => this.deleteEntry(id));
   },
@@ -719,22 +739,31 @@ export const DayBookService = {
     const totals = { cashIn: 0, cashOut: 0, onlineIn: 0, onlineOut: 0 };
     const byService = {};
     const byDay = {};
-    const blank = () => ({ count: 0, cashIn: 0, cashOut: 0, onlineIn: 0, onlineOut: 0, pending: 0 });
+    const blank = () => ({ count: 0, jobs: 0, amount: 0, cashIn: 0, cashOut: 0, onlineIn: 0, onlineOut: 0, pending: 0 });
+    const billsSeen = {};
     for (const t of txns) {
       const field = (t.mode === 'cash' ? 'cash' : 'online') + (t.direction === 'out' ? 'Out' : 'In');
       totals[field] += t.amount;
       const row = byService[t.service] || (byService[t.service] = blank());
       row.count++; row[field] += t.amount;
+      if (t.source === 'bill') (billsSeen[t.service] || (billsSeen[t.service] = new Set())).add(t.billId);
       const day = byDay[t.date] || (byDay[t.date] = { cash: 0, online: 0 });
       const signed = t.direction === 'out' ? -t.amount : t.amount;
       day[t.mode === 'cash' ? 'cash' : 'online'] += signed;
     }
+    // A "job" is one piece of work: a hand-entered entry, or a bill that was paid in this period
+    for (const [name, set] of Object.entries(billsSeen)) {
+      byService[name].jobs += set.size;
+      byService[name].amount += byService[name].cashIn + byService[name].onlineIn - byService[name].cashOut - byService[name].onlineOut;
+    }
     let pending = 0;
     for (const e of this.getEntries()) {
-      if (e.date < startKey || e.date > endKey || e.pending <= 0) continue;
+      if (e.date < startKey || e.date > endKey) continue;
       if (services && services.length && !services.includes(e.service)) continue;
-      pending += e.pending;
-      (byService[e.service] || (byService[e.service] = blank())).pending += e.pending;
+      const row = byService[e.service] || (byService[e.service] = blank());
+      row.jobs++;
+      row.amount += e.direction === 'out' ? -e.amount : e.amount;
+      if (e.pending > 0) { pending += e.pending; row.pending += e.pending; }
     }
     const sorted = txns.sort((a, b) => new Date(a.time) - new Date(b.time));
     return {
@@ -742,6 +771,36 @@ export const DayBookService = {
       cashNet: totals.cashIn - totals.cashOut, onlineNet: totals.onlineIn - totals.onlineOut,
       opening: this.getSummary(startKey).opening, closing: this.getSummary(endKey).counter,
     };
+  },
+
+  // Rows for the Excel download: one line per transaction (money out is negative), then totals
+  exportRows(txns) {
+    const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)']];
+    let cash = 0, online = 0;
+    for (const t of txns) {
+      const v = t.direction === 'out' ? -t.amount : t.amount;
+      if (t.mode === 'cash') cash += v; else online += v;
+      rows.push([
+        t.date, new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), t.label, t.subject || '', t.note || '',
+        t.direction === 'out' ? 'Paid out' : 'Received', t.mode === 'cash' ? 'Cash' : 'Online',
+        t.mode === 'cash' ? v : '', t.mode === 'online' ? v : '', t.pendingLeft > 0 ? t.pendingLeft : '',
+      ]);
+    }
+    rows.push(['', '', 'Total', '', '', '', '', cash, online, '']);
+    return rows;
+  },
+
+  // Rows for the "By service" sheet of the download
+  exportServiceRows(report) {
+    const rows = [['Service', 'Jobs', 'Amount (₹)', 'Cash (₹)', 'Online (₹)', 'Pending (₹)']];
+    let jobs = 0, amount = 0, cash = 0, online = 0, pending = 0;
+    for (const [name, r] of Object.entries(report.byService).sort((a, b) => b[1].jobs - a[1].jobs)) {
+      const c = r.cashIn - r.cashOut, o = r.onlineIn - r.onlineOut;
+      rows.push([name, r.jobs, r.amount, c, o, r.pending]);
+      jobs += r.jobs; amount += r.amount; cash += c; online += o; pending += r.pending;
+    }
+    rows.push(['Total', jobs, amount, cash, online, pending]);
+    return rows;
   },
 
   // Walk every active day in order so each day's starting cash is the previous day's leftover
