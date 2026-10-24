@@ -246,9 +246,10 @@ export default function DayBook({ navigate }) {
                 {t.source === 'manual' && <button className="link" onClick={() => startEdit(t.entryId)}>edit</button>}
                 {t.source === 'manual' && t.pendingLeft > 0 && <span className="pill warn">₹{t.pendingLeft.toLocaleString('en-IN')} pending</span>}
                 {t.source === 'phone' && <button className="link" onClick={() => prefillFromPayment(t.phoneId)}>add details</button>}
-                {t.mode === 'online' && t.direction === 'in' && (t.source === 'phone' || confirmed.byTxn[t.id]
-                  ? <span className="pill ok" title={(t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref) ? `UPI ref ${t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref}` : 'Payment notification received'}>{t.source === 'phone' ? '✓ Received on phone' : '✓ Received'}</span>
-                  : <span className="pill wait" title="No payment notification has arrived for this yet">Waiting</span>)}
+                {/* Only a green mark when the phone notification arrived; nothing is shown while it hasn't */}
+                {t.mode === 'online' && t.direction === 'in' && (t.source === 'phone' || confirmed.byTxn[t.id]) && (
+                  <span className="pill ok" title={(t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref) ? `UPI ref ${t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref}` : 'Payment notification received'}>{t.source === 'phone' ? '✓ Received on phone' : '✓ Received'}</span>
+                )}
               </div>
               <div className="muted small">
                 {view !== 'day' ? `${parseKey(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ` : ''}

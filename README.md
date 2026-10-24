@@ -459,7 +459,7 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
 ## Online payment confirmation (PhonePe / PayZapp)
-Online entries in the Day Book show amber **Waiting** until a payment notification for the same amount arrives, then turn green **✓ Received**.
+Online entries in the Day Book turn green with **✓ Received** when a payment notification for the same amount arrives. Until then (or if it never arrives) nothing extra is shown.
 - The counter phone forwards each "payment received" notification (free automation app, e.g. MacroDroid) to `POST /api/incoming?app=phonepe` (Vercel function `api/incoming.js`, body = notification text).
 - `src/services/paymentParser.js` reads the amount and UPI reference; settlements, debits, refunds and failures are ignored.
 - Matching (`DayBookService.confirmations`): same amount, notification within 6 hours of the entry, closest first, one notification confirms one payment. Nothing is stored for the match.

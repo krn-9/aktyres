@@ -826,7 +826,7 @@ export const DayBookService = {
         t.date, new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), t.label, t.subject || '', t.note || '',
         t.direction === 'out' ? 'Paid out' : 'Received', t.mode === 'cash' ? 'Cash' : 'Online',
         t.mode === 'cash' ? v : '', t.mode === 'online' ? v : '', t.pendingLeft > 0 ? t.pendingLeft : '',
-        t.mode === 'online' && t.direction === 'in' && confirmed ? (t.source === 'phone' ? 'Received ✓ (from phone)' : confirmed.byTxn[t.id] ? 'Received ✓' : 'Waiting') : '',
+        t.mode === 'online' && t.direction === 'in' && confirmed ? (t.source === 'phone' ? 'Received ✓ (from phone)' : confirmed.byTxn[t.id] ? 'Received ✓' : '') : '',
       ]);
     }
     rows.push(['', '', 'Total', '', '', '', '', cash, online, '', '']);
