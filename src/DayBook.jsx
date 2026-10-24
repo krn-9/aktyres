@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DayBookService } from './services/dataService';
+import { parseKey, shiftDate, periodRange, shiftPeriod, periodLabel } from './periods';
 
 const PRESET_SERVICES = ['Car wash', 'Bike wash', 'Body wash', 'Puncture', 'Air', 'Nitrogen', 'Tyre fitting', 'Tyre sale', 'Alignment', 'Balancing'];
 // Subjects (what an entry is about) will be added later. Until then it is a free-text field that
@@ -8,44 +9,6 @@ const SUBJECT_OPTIONS = [];
 
 const money = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const parseKey = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
-const keyOf = (date) => DayBookService.dateKey(date);
-
-function shiftDate(key, days) {
-  const d = parseKey(key);
-  return keyOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days));
-}
-
-// First and last day (as keys) of the week / month / year that contains `key`
-function periodRange(view, key) {
-  const d = parseKey(key);
-  if (view === 'week') {
-    const monday = (d.getDay() + 6) % 7;
-    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() - monday);
-    return [keyOf(start), keyOf(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6))];
-  }
-  if (view === 'month') return [keyOf(new Date(d.getFullYear(), d.getMonth(), 1)), keyOf(new Date(d.getFullYear(), d.getMonth() + 1, 0))];
-  if (view === 'year') return [keyOf(new Date(d.getFullYear(), 0, 1)), keyOf(new Date(d.getFullYear(), 11, 31))];
-  return [key, key];
-}
-
-function shiftPeriod(view, key, dir) {
-  const d = parseKey(key);
-  if (view === 'week') return shiftDate(key, 7 * dir);
-  if (view === 'month') return keyOf(new Date(d.getFullYear(), d.getMonth() + dir, 1));
-  if (view === 'year') return keyOf(new Date(d.getFullYear() + dir, 0, 1));
-  return shiftDate(key, dir);
-}
-
-function periodLabel(view, key) {
-  const [start, end] = periodRange(view, key);
-  const s = parseKey(start), e = parseKey(end);
-  if (view === 'day') return s.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  if (view === 'week') return `${s.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${e.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
-  if (view === 'month') return s.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  return String(s.getFullYear());
-}
-
 const EMPTY_FORM = { picked: ['Car wash'], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '' };
 
 // The shop's daily book: cash in the counter, work done, how each payment arrived, what is pending,

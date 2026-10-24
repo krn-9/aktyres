@@ -5,6 +5,7 @@ import { initSync, signIn, signOut, onAuthChange, startRealtimeSync, syncAll, fl
 import { Bill } from './models/Bill';
 import { Party } from './models/Party';
 import DayBook from './DayBook';
+import WorkDashboard from './WorkDashboard';
 
 // Simple hash-based router
 function useRoute() {
@@ -160,6 +161,7 @@ export default function App() {
     }
     switch (route) {
       case '/': return <DayBook navigate={navigate} />;
+      case '/dashboard': return <WorkDashboard navigate={navigate} />;
       case '/overview': return <Dashboard navigate={navigate} />;
       case '/inventory': return <Inventory navigate={navigate} params={params} />;
       case '/inventory/add': return <TyreForm navigate={navigate} />;
@@ -213,6 +215,7 @@ function Navbar({ navigate, route, settings, user, onSignOut }) {
   const [open, setOpen] = useState(false);   // the menu on small screens
   const links = [
     { path: '/', label: 'Day Book' },
+    { path: '/dashboard', label: 'Dashboard' },
     { path: '/overview', label: 'Overview' },
     { path: '/inventory', label: 'Inventory' },
     { path: '/bills', label: 'Bills' },

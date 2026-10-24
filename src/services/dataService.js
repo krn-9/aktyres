@@ -815,6 +815,56 @@ export const DayBookService = {
     return { byTxn, unmatched: incoming.filter(p => !used.has(p.id)) };
   },
 
+  // "Work done" for a period (startKey..endKey): how many jobs of each service, what they were worth,
+  // and how it was paid. A job is a hand-entered entry that is not an expense, a sale bill, or an online
+  // payment from the phone that has no service yet. Money is counted on the day of the job.
+  getWorkReport(startKey, endKey) {
+    const rows = {};
+    const jobs = [];
+    const perDay = {};
+    const row = (name) => rows[name] || (rows[name] = { service: name, jobs: 0, amount: 0, cash: 0, online: 0, pending: 0 });
+    const add = (name, job) => {
+      const r = row(name);
+      r.jobs++; r.amount += job.amount; r.cash += job.cash; r.online += job.online; r.pending += job.pending;
+      perDay[job.date] = (perDay[job.date] || 0) + 1;
+      jobs.push({ service: name, ...job });
+    };
+    for (const e of this.getEntries()) {
+      if (e.direction === 'out' || e.date < startKey || e.date > endKey) continue;
+      add(e.service, {
+        source: 'manual', entryId: e.id, date: e.date, time: e.createdAt, subject: e.subject, note: e.note,
+        amount: e.amount, pending: e.pending,
+        cash: e.receipts.filter(r => r.mode === 'cash').reduce((n, r) => n + r.amount, 0),
+        online: e.receipts.filter(r => r.mode !== 'cash').reduce((n, r) => n + r.amount, 0),
+      });
+    }
+    const payments = PaymentService.getAll();
+    for (const b of BillService.getAll()) {
+      const d = dateKey(b.date);
+      if (b.type !== 'sale' || !b.isFinal || d < startKey || d > endKey) continue;
+      const mine = payments.filter(p => p.billId === b.id);
+      add('Tyre sale', {
+        source: 'bill', billId: b.id, date: d, time: b.date, subject: '', note: `${b.billNumber} · ${b.partyName || 'Walk-in'}`,
+        amount: b.total, pending: Math.max(b.balance, 0),
+        cash: mine.filter(p => p.method === 'cash').reduce((n, p) => n + p.amount, 0),
+        online: mine.filter(p => p.method !== 'cash').reduce((n, p) => n + p.amount, 0),
+      });
+    }
+    for (const p of this.confirmations().unmatched) {
+      const d = dateKey(p.receivedAt);
+      if (d < startKey || d > endKey) continue;
+      add('Online payment (service not set)', {
+        source: 'phone', date: d, time: p.receivedAt, subject: '', note: [p.app, p.ref ? `UPI ${p.ref}` : ''].filter(Boolean).join(' · '),
+        amount: p.amount, pending: 0, cash: 0, online: p.amount,
+      });
+    }
+    const list = Object.values(rows).sort((a, b) => b.jobs - a.jobs || b.amount - a.amount);
+    const totals = list.reduce((t, r) => ({
+      jobs: t.jobs + r.jobs, amount: t.amount + r.amount, cash: t.cash + r.cash, online: t.online + r.online, pending: t.pending + r.pending,
+    }), { jobs: 0, amount: 0, cash: 0, online: 0, pending: 0 });
+    return { rows: list, jobs: jobs.sort((a, b) => new Date(a.time) - new Date(b.time)), totals, perDay };
+  },
+
   // Rows for the Excel download: one line per transaction (money out is negative), then totals
   exportRows(txns, confirmed) {
     const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)', 'Online payment']];

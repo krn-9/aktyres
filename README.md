@@ -458,6 +458,9 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download Excel button for whatever is on screen.
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
+## Dashboard (work done)
+The Dashboard menu item (between Day Book and Overview) shows how many jobs of each service were done today, this week, this month or this year, with their value and how they were paid (cash, online, pending). Tap a service to see the jobs behind the number; Download Excel exports the same data. Jobs are hand-entered Day Book entries (not expenses), sale bills, and online payments from the phone that have no service yet. Code: `src/WorkDashboard.jsx`, `DayBookService.getWorkReport`.
+
 ## Online payment confirmation (PhonePe / PayZapp)
 Online entries in the Day Book turn green with **✓ Received** when a payment notification for the same amount arrives. Until then (or if it never arrives) nothing extra is shown.
 - The counter phone forwards each "payment received" notification (free automation app, e.g. MacroDroid) to `POST /api/incoming?app=phonepe` (Vercel function `api/incoming.js`, body = notification text).
