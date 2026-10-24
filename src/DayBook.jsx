@@ -50,7 +50,6 @@ export default function DayBook({ navigate }) {
   const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];
   const knownServices = [...new Set([...PRESET_SERVICES, ...customServices, ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
   const formTotal = form.picked.reduce((n, name) => n + (parseFloat(form.amounts[name]) || 0), 0);
-  const dayReport = view === 'day' ? DayBookService.getPeriodSummary(date, date) : null;
   const subjectSuggestions = [...new Set([...SUBJECT_OPTIONS, ...DayBookService.getEntries().map(e => e.subject).filter(Boolean)])];
 
   // ---------- add / edit ----------
@@ -236,26 +235,6 @@ export default function DayBook({ navigate }) {
     </div>
   );
 
-  const workRows = dayReport
-    ? Object.entries(dayReport.byService).filter(([, r]) => r.jobs > 0).sort((a, b) => b[1].jobs - a[1].jobs)
-    : [];
-  const workCard = view === 'day' && (
-    <div className="card">
-      <h3>Work done {isToday ? 'today' : 'on this day'} <span className="muted small">(tap one to show just that)</span></h3>
-      {workRows.length === 0 && <div className="muted">No work recorded yet.</div>}
-      <div className="work-tiles">
-        {workRows.map(([name, r]) => (
-          <button key={name} className={`work-tile ${filter.includes(name) ? 'active' : ''}`} onClick={() => toggleService(name)}>
-            <div className="work-count">{r.jobs}</div>
-            <div className="work-name">{name}</div>
-            <div className="muted small">{money(r.amount)} · cash {money(r.cashIn - r.cashOut)} · online {money(r.onlineIn - r.onlineOut)}</div>
-            {r.pending > 0 && <div className="pill warn" style={{ marginLeft: 0 }}>{money(r.pending)} pending</div>}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
   // Give a payment that arrived on the phone a service, by entering it as a normal Day Book entry
   const prefillFromPayment = (phoneId) => {
     const p = confirmed.unmatched.find(x => x.id === phoneId);
@@ -420,7 +399,6 @@ export default function DayBook({ navigate }) {
             </div>
           </div>
 
-          {workCard}
           {pendingCard}
           <div className="card">
             <h3>Show only</h3>
