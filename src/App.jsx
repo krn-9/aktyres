@@ -547,6 +547,9 @@ function TyreForm({ navigate, editId }) {
 // ============ Bill Detail ============
 function BillDetail({ navigate, billId }) {
   const bill = BillService.getById(billId);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
   if (!bill) {
     return <div className="page"><h1>Bill not found</h1><button onClick={() => navigate('/bills')}>Back</button></div>;
   }
@@ -560,11 +563,12 @@ function BillDetail({ navigate, billId }) {
   };
 
   const handlePayment = () => {
-    const amount = prompt('Enter payment amount:');
-    if (amount && parseFloat(amount) > 0) {
-      PaymentService.recordPayment(bill.id, parseFloat(amount), 'cash', '', '');
-      navigate('/bills');
-    }
+    const amount = parseFloat(payAmount);
+    if (!(amount > 0)) { alert('Enter the amount received'); return; }
+    PaymentService.recordPayment(bill.id, amount, payMethod, '', '');
+    setPayOpen(false);
+    setPayAmount('');
+    navigate(`/bills/${bill.id}`);
   };
 
   return (
@@ -603,8 +607,30 @@ function BillDetail({ navigate, billId }) {
         {bill.isFinal && <div className="balance">Balance: ₹{bill.balance.toLocaleString()}</div>}
       </div>
       {bill.notes && <div className="detail-row"><strong>Notes:</strong> {bill.notes}</div>}
+      {payOpen && bill.isFinal && bill.balance > 0 && (
+        <div className="form-section">
+          <h3>Record payment · ₹{bill.balance.toLocaleString()} pending</h3>
+          <div className="new-item-grid">
+            <div className="form-row">
+              <label>Amount received (₹)</label>
+              <input type="number" min="0" max={bill.balance} value={payAmount} onChange={e => setPayAmount(e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label>Paid by</label>
+              <select value={payMethod} onChange={e => setPayMethod(e.target.value)}>
+                <option value="cash">Cash</option>
+                <option value="upi">Online (UPI)</option>
+                <option value="bank">Bank transfer</option>
+                <option value="cheque">Cheque</option>
+              </select>
+            </div>
+          </div>
+          <div className="hint">Less than the pending amount is fine: the rest stays pending.</div>
+          <button type="button" className="btn-primary" style={{ alignSelf: 'flex-start' }} onClick={handlePayment}>Save payment</button>
+        </div>
+      )}
       <div className="form-actions">
-        {bill.isFinal && bill.balance > 0 && <button onClick={handlePayment} className="btn-primary">Record Payment</button>}
+        {bill.isFinal && bill.balance > 0 && <button onClick={() => { setPayOpen(!payOpen); setPayAmount(String(bill.balance)); }} className="btn-primary">Record Payment</button>}
         <button onClick={() => navigate(`/bills/edit/${bill.id}`)} style={{ background: '#007bff', color: 'white', border: 'none', padding: '10px 20px', borderRadius: 8, cursor: 'pointer' }}>Edit Bill</button>
         <button onClick={handleDelete} className="btn-danger">Delete Bill</button>
       </div>
@@ -696,6 +722,7 @@ function BillForm({ navigate, type, editId }) {
   const [rate, setRate] = useState('');
   const [payNow, setPayNow] = useState(true);      // new bills are marked paid unless unticked
   const [payMode, setPayMode] = useState('cash');
+  const [received, setReceived] = useState('');   // used when 'Paid in full' is unticked
 
   const parties = PartyService.search(partySearch);
   const tyres = TyreService.search(tyreSearch);
@@ -751,7 +778,9 @@ function BillForm({ navigate, type, editId }) {
       // Apply new inventory
       BillService.applyToInventory(bill);
     } else {
-      BillService.finalize(bill, payNow && bill.isFinal ? payMode : null);
+      const part = parseFloat(received);
+      if (payNow || part > 0) BillService.finalize(bill, bill.isFinal ? payMode : null, payNow ? undefined : part);
+      else BillService.finalize(bill, null);
     }
     navigate('/bills');
   };
@@ -893,9 +922,16 @@ function BillForm({ navigate, type, editId }) {
           <h3>Payment</h3>
           <label className="check-row">
             <input type="checkbox" checked={payNow} onChange={e => setPayNow(e.target.checked)} />
-            <span>Paid in full {payNow ? '' : '(this bill will be saved as unpaid)'}</span>
+            <span>Paid in full {payNow ? '' : '(untick = unpaid or part paid)'}</span>
           </label>
-          {payNow && (
+          {!payNow && (
+            <div className="form-row" style={{ maxWidth: 260 }}>
+              <label>Received now (₹), leave empty if nothing</label>
+              <input type="number" min="0" max={bill.total} value={received} onChange={e => setReceived(e.target.value)} placeholder="0" />
+              <div className="hint">Pending: ₹{Math.max(bill.total - (parseFloat(received) || 0), 0).toLocaleString()}</div>
+            </div>
+          )}
+          {(payNow || parseFloat(received) > 0) && (
             <div className="form-row" style={{ maxWidth: 220 }}>
               <label>Paid by</label>
               <select value={payMode} onChange={e => setPayMode(e.target.value)}>

@@ -304,11 +304,16 @@ export const BillService = {
 
   // Save a NEW bill: store it, move stock, and (if payMode is given) record it as paid in full
   // with that payment method ('cash' | 'upi' | 'bank' | 'cheque'). Paid bills show in the day book.
-  finalize(bill, payMode) {
+  // `amount` (optional) is a part payment; the rest of the bill stays unpaid. Default: paid in full.
+  finalize(bill, payMode, amount) {
     const saved = this.save(bill);
     this.applyToInventory(saved);
     if (payMode && saved.isFinal && saved.total > 0) {
-      PaymentService.recordPayment(saved.id, saved.total, payMode, '', 'Paid when billed');
+      const pay = amount === undefined || amount === null
+        ? saved.total : Math.min(Math.max(Number(amount) || 0, 0), saved.total);
+      if (pay > 0) {
+        PaymentService.recordPayment(saved.id, pay, payMode, '', pay < saved.total ? 'Part payment when billed' : 'Paid when billed');
+      }
     }
     return this.getById(saved.id) || saved;
   },
@@ -387,6 +392,9 @@ export const PaymentService = {
   recordPayment(billId, amount, method, reference, notes) {
     const bill = BillService.getById(billId);
     if (!bill) return null;
+    // Never take more than what is still owed on the bill
+    amount = Math.min(Number(amount) || 0, Math.max(bill.balance, 0));
+    if (amount <= 0) return null;
 
     const payment = new Payment({
       billId,
@@ -565,18 +573,92 @@ export const DayBookService = {
     return load(KEYS.dayEntries).map(d => new DayEntry(d));
   },
 
-  addEntry(data) {
-    const entry = new DayEntry(data);
+  _writeEntry(entry) {
     const all = load(KEYS.dayEntries);
-    all.push({ ...entry });
+    const idx = all.findIndex(e => e.id === entry.id);
+    if (idx >= 0) all[idx] = { ...entry }; else all.push({ ...entry });
     save(KEYS.dayEntries, all);
     getFirebaseSync().then(({ push }) => { if (push) push('dayEntries', entry.id, { ...entry }); });
     return entry;
   },
 
+  // data.amount is the full charge; data.received (default: all of it) is what came in now.
+  // Whatever is not received stays "pending" until collect() is called.
+  addEntry(data) {
+    const amount = Number(data.amount) || 0;
+    const received = data.received === undefined || data.received === null
+      ? amount : Math.min(Math.max(Number(data.received) || 0, 0), amount);
+    const createdAt = new Date().toISOString();
+    return this._writeEntry(new DayEntry({
+      date: data.date, service: data.service, amount, direction: data.direction,
+      subject: data.subject, note: data.note, createdAt,
+      receipts: received > 0
+        ? [{ id: crypto.randomUUID(), date: data.date, amount: received, mode: data.mode, time: createdAt }]
+        : [],
+    }));
+  },
+
+  // Edit an entry. Money received can only be changed here while it is a single payment;
+  // later collections are separate receipts and stay as they are.
+  updateEntry(id, patch) {
+    const found = load(KEYS.dayEntries).find(e => e.id === id);
+    if (!found) return null;
+    const e = new DayEntry(found);
+    const oldDate = e.date;
+    for (const key of ['service', 'direction', 'subject', 'note']) {
+      if (patch[key] !== undefined) e[key] = patch[key];
+    }
+    if (patch.amount !== undefined) e.amount = Number(patch.amount) || 0;
+    if (patch.date && patch.date !== oldDate) {
+      e.date = patch.date;
+      e.receipts = e.receipts.map(r => (r.date === oldDate ? { ...r, date: patch.date } : r));
+    }
+    if (e.receipts.length <= 1 && (patch.received !== undefined || patch.mode !== undefined)) {
+      const base = e.receipts[0] || { id: crypto.randomUUID(), date: e.date, amount: 0, mode: 'cash', time: new Date().toISOString() };
+      const received = patch.received !== undefined
+        ? Math.min(Math.max(Number(patch.received) || 0, 0), e.amount) : base.amount;
+      e.receipts = received > 0
+        ? [{ ...base, amount: received, mode: patch.mode === 'online' ? 'online' : (patch.mode === 'cash' ? 'cash' : base.mode) }]
+        : [];
+    }
+    return this._writeEntry(e);
+  },
+
+  // Record money that comes in (or goes out) later for a part-paid entry
+  collect(id, amount, mode) {
+    const found = load(KEYS.dayEntries).find(e => e.id === id);
+    if (!found) return null;
+    const e = new DayEntry(found);
+    const value = Math.min(Number(amount) || 0, e.pending);
+    if (value <= 0) return e;
+    const now = new Date().toISOString();
+    e.receipts.push({ id: crypto.randomUUID(), date: dateKey(now), amount: value, mode: mode === 'online' ? 'online' : 'cash', time: now });
+    return this._writeEntry(e);
+  },
+
   deleteEntry(id) {
     save(KEYS.dayEntries, load(KEYS.dayEntries).filter(e => e.id !== id));
     getFirebaseSync().then(({ del }) => { if (del) del('dayEntries', id); });
+  },
+
+  deleteEntries(ids) {
+    ids.forEach(id => this.deleteEntry(id));
+  },
+
+  // Entries that are only part-paid (or not paid yet)
+  pendingEntries() {
+    return this.getEntries().filter(e => e.pending > 0).sort((a, b) => (a.date < b.date ? -1 : 1));
+  },
+
+  // Unpaid balances on sale / purchase bills
+  billBalances() {
+    let receivable = 0, payable = 0, count = 0;
+    for (const b of BillService.getAll()) {
+      if (!b.isFinal || b.balance <= 0) continue;
+      count++;
+      if (b.type === 'purchase') payable += b.balance; else receivable += b.balance;
+    }
+    return { receivable, payable, count };
   },
 
   // Per-day settings: cash taken home, and an optional hand-set starting cash
@@ -597,20 +679,27 @@ export const DayBookService = {
   // Every rupee that moved: day-book entries + bill payments (sale payments come in,
   // purchase payments go out). Online = anything that is not cash (UPI, bank, cheque).
   allTransactions() {
-    const out = this.getEntries().map(e => ({
-      id: e.id, date: e.date, time: e.createdAt, label: e.service, note: e.note,
-      amount: e.amount, mode: e.mode, direction: e.direction, source: 'manual',
-    }));
+    const out = [];
+    for (const e of this.getEntries()) {
+      for (const r of e.receipts) {
+        out.push({
+          id: r.id, entryId: e.id, date: r.date, time: r.time, service: e.service, label: e.service,
+          subject: e.subject, note: e.note, amount: r.amount, mode: r.mode, direction: e.direction,
+          source: 'manual', total: e.amount, pendingLeft: e.pending,
+        });
+      }
+    }
     const bills = new Map(BillService.getAll().map(b => [b.id, b]));
     for (const p of PaymentService.getAll()) {
       const bill = bills.get(p.billId);
+      const purchase = !!bill && bill.type === 'purchase';
       out.push({
         id: p.id, date: dateKey(p.date), time: p.date,
-        label: bill ? `${bill.type === 'purchase' ? 'Purchase' : 'Tyre sale'} ${bill.billNumber}` : 'Bill payment',
-        note: bill ? (bill.partyName || 'Walk-in') : (p.partyName || ''),
+        service: purchase ? 'Purchase' : 'Tyre sale',
+        label: bill ? `${purchase ? 'Purchase' : 'Tyre sale'} ${bill.billNumber}` : 'Bill payment',
+        subject: '', note: bill ? (bill.partyName || 'Walk-in') : (p.partyName || ''),
         amount: p.amount, mode: p.method === 'cash' ? 'cash' : 'online',
-        direction: bill && bill.type === 'purchase' ? 'out' : 'in',
-        source: 'bill', billId: p.billId,
+        direction: purchase ? 'out' : 'in', source: 'bill', billId: p.billId,
       });
     }
     return out;
@@ -620,6 +709,39 @@ export const DayBookService = {
     return this.allTransactions()
       .filter(t => t.date === date)
       .sort((a, b) => new Date(a.time) - new Date(b.time));
+  },
+
+  // Totals for a period (startKey..endKey inclusive), split by service and by day.
+  // `services`, when given, limits everything to those services.
+  getPeriodSummary(startKey, endKey, services) {
+    let txns = this.allTransactions().filter(t => t.date >= startKey && t.date <= endKey);
+    if (services && services.length) txns = txns.filter(t => services.includes(t.service));
+    const totals = { cashIn: 0, cashOut: 0, onlineIn: 0, onlineOut: 0 };
+    const byService = {};
+    const byDay = {};
+    const blank = () => ({ count: 0, cashIn: 0, cashOut: 0, onlineIn: 0, onlineOut: 0, pending: 0 });
+    for (const t of txns) {
+      const field = (t.mode === 'cash' ? 'cash' : 'online') + (t.direction === 'out' ? 'Out' : 'In');
+      totals[field] += t.amount;
+      const row = byService[t.service] || (byService[t.service] = blank());
+      row.count++; row[field] += t.amount;
+      const day = byDay[t.date] || (byDay[t.date] = { cash: 0, online: 0 });
+      const signed = t.direction === 'out' ? -t.amount : t.amount;
+      day[t.mode === 'cash' ? 'cash' : 'online'] += signed;
+    }
+    let pending = 0;
+    for (const e of this.getEntries()) {
+      if (e.date < startKey || e.date > endKey || e.pending <= 0) continue;
+      if (services && services.length && !services.includes(e.service)) continue;
+      pending += e.pending;
+      (byService[e.service] || (byService[e.service] = blank())).pending += e.pending;
+    }
+    const sorted = txns.sort((a, b) => new Date(a.time) - new Date(b.time));
+    return {
+      ...totals, pending, byService, byDay, txns: sorted,
+      cashNet: totals.cashIn - totals.cashOut, onlineNet: totals.onlineIn - totals.onlineOut,
+      opening: this.getSummary(startKey).opening, closing: this.getSummary(endKey).counter,
+    };
   },
 
   // Walk every active day in order so each day's starting cash is the previous day's leftover

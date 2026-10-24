@@ -314,3 +314,26 @@ label.btn-primary { display: inline-block; text-align: center; border-radius: va
 .stat-card.clickable { cursor: pointer; transition: box-shadow .15s, transform .15s, border-color .15s; }
 .stat-card.clickable:hover { box-shadow: var(--shadow); transform: translateY(-2px); border-color: #d3d7e3; }
 .stat-card.clickable:focus-visible { outline: 2px solid rgba(233, 69, 96, .45); outline-offset: 2px; }
+
+/* Day Book: pending, selection, reports */
+.pill { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 600; }
+.pill.warn { background: var(--amber-soft); color: var(--amber); }
+.warn-text { color: var(--amber); }
+.pending-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+.bulk-bar { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; min-height: 36px; }
+.bulk-bar .check-row { padding: 6px 10px; }
+.st-check { width: 16px; height: 16px; margin-right: 10px; vertical-align: -2px; }
+.chip.ghost { border-style: dashed; }
+.service-table { margin-top: 8px; overflow-x: auto; }
+.svc-row { display: grid; grid-template-columns: 1.6fr .6fr 1fr 1fr 1fr .9fr; gap: 10px; padding: 11px 8px; border-bottom: 1px solid #eff0f5; font-size: .9rem; cursor: pointer; align-items: center; min-width: 560px; }
+.svc-row:hover { background: #f8f9fc; }
+.svc-row.sel { background: var(--brand-soft); }
+.svc-head { cursor: default; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 600; background: #f8f9fc; border-radius: var(--radius-sm); border-bottom: none; }
+.svc-head:hover { background: #f8f9fc; }
+.bars { display: grid; gap: 4px; align-items: end; height: 170px; padding-top: 8px; }
+.bar-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
+.bar-stack { width: 100%; max-width: 28px; display: flex; flex-direction: column; justify-content: flex-end; border-radius: 6px 6px 2px 2px; overflow: hidden; min-height: 2px; background: #eceef4; }
+.bar-cash { background: var(--navy); }
+.bar-online { background: var(--blue); }
+.bar-label { font-size: .62rem; color: var(--ink-3); margin-top: 4px; }
+.date-nav { flex-wrap: wrap; }
