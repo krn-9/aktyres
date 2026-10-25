@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { TyreService, BillService, PaymentService, PartyService, SettingsService, BillParser } from './services/dataService';
 import { Tyre } from './models/Tyre';
+import { asText } from './models/asText';
 import { initSync, signIn, signOut, onAuthChange, startRealtimeSync, syncAll, flushEverything, clearLocalData, getSyncStatus } from './services/firebaseSync';
 import { Bill } from './models/Bill';
 import { Party } from './models/Party';
@@ -366,10 +367,11 @@ function Inventory({ navigate, params }) {
       let imported = 0;
       for (const row of rows) {
         const tyre = new Tyre({
-          brand: row.Brand || row.brand || row.BRAND || '',
-          model: row.Model || row.model || row.MODEL || '',
-          size: row.Size || row.size || row.SIZE || '',
-          type: row.Type || row.type || row.TYPE || 'tubeless',
+          // Excel turns 17 or 175 into numbers: keep every text column as text
+          brand: asText(row.Brand ?? row.brand ?? row.BRAND),
+          model: asText(row.Model ?? row.model ?? row.MODEL),
+          size: asText(row.Size ?? row.size ?? row.SIZE),
+          type: asText(row.Type ?? row.type ?? row.TYPE, 'tubeless'),
           costPrice: parseFloat(row.CostPrice || row.costPrice || row['Cost Price'] || row['cost price'] || 0),
           sellingPrice: parseFloat(row.SellingPrice || row.sellingPrice || row['Selling Price'] || row['selling price'] || 0),
           quantity: parseInt(row.Quantity || row.quantity || row.QTY || row.qty || 0),
@@ -578,7 +580,7 @@ function BillDetail({ navigate, billId }) {
       <div className="bill-detail">
         <div className="detail-row"><strong>Type:</strong> {bill.typeLabel}</div>
         <div className="detail-row"><strong>Party:</strong> {bill.partyName || 'Walk-in'}</div>
-        {bill.invoiceNo && <div className="detail-row"><strong>Invoice No:</strong> {bill.invoiceNo}</div>}
+        <div className="detail-row"><strong>Invoice No:</strong> {bill.invoiceNo || bill.billNumber}</div>
         <div className="detail-row"><strong>Phone:</strong> {bill.partyPhone || '-'}</div>
         <div className="detail-row"><strong>Date:</strong> {new Date(bill.date).toLocaleDateString()}</div>
         {bill.isFinal && <div className="detail-row"><strong>Status:</strong> <span className={`status-badge ${bill.status}`}>{bill.status}</span></div>}
@@ -815,10 +817,18 @@ function BillForm({ navigate, type, editId }) {
           <label>Phone</label>
           <input value={bill.partyPhone} onChange={e => { bill.partyPhone = e.target.value; setBill(new Bill({...bill})); }} />
         </div>
-        <div className="form-row">
-          <label>Invoice No</label>
-          <input value={bill.invoiceNo} onChange={e => { bill.invoiceNo = e.target.value; setBill(new Bill({...bill})); }} placeholder="Dealer invoice number" />
-        </div>
+        {bill.type === 'purchase' ? (
+          <div className="form-row">
+            <label>Dealer's invoice number (optional)</label>
+            <input value={bill.invoiceNo} onChange={e => { bill.invoiceNo = e.target.value; setBill(new Bill({...bill})); }} placeholder="Leave empty to use the automatic number" />
+          </div>
+        ) : (
+          <div className="form-row">
+            <label>Invoice no.</label>
+            <input value={existingBill ? (bill.invoiceNo || bill.billNumber) : BillService.nextNumber()} readOnly disabled />
+            <div className="hint">Created automatically when you save the bill.</div>
+          </div>
+        )}
       </div>
 
       <div className="form-section">

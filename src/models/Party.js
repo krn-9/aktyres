@@ -1,11 +1,13 @@
+import { asText } from './asText';
+
 export class Party {
   constructor(data = {}) {
     this.id = data.id || crypto.randomUUID();
-    this.name = data.name || '';
-    this.phone = data.phone || '';
-    this.type = data.type || 'customer'; // customer / dealer / supplier
-    this.address = data.address || '';
-    this.gstin = data.gstin || '';
+    this.name = asText(data.name);
+    this.phone = asText(data.phone);
+    this.type = asText(data.type, 'customer'); // customer / dealer / supplier
+    this.address = asText(data.address);
+    this.gstin = asText(data.gstin);
     this.createdAt = data.createdAt || new Date().toISOString();
   }
 

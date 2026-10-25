@@ -1,11 +1,13 @@
 // Tyre data model
+import { asText } from './asText';
+
 export class Tyre {
   constructor(data = {}) {
     this.id = data.id || crypto.randomUUID();
-    this.brand = data.brand || '';
-    this.model = data.model || '';
-    this.size = data.size || '';        // e.g. "195/65R15"
-    this.type = data.type || 'tubeless'; // tubeless / tube-type
+    this.brand = asText(data.brand);
+    this.model = asText(data.model);
+    this.size = asText(data.size);        // e.g. "195/65R15"
+    this.type = asText(data.type, 'tubeless'); // tubeless / tube-type
     this.costPrice = data.costPrice || 0;
     this.sellingPrice = data.sellingPrice || 0;
     this.quantity = data.quantity || 0;

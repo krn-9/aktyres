@@ -1,3 +1,5 @@
+import { asText } from './asText';
+
 // One line in the shop's day book: work done (car wash, puncture, ...) or money paid out.
 // `amount` is what the work costs. Money actually received (or paid) is kept as `receipts`, so an
 // entry can be part-paid: the rest is "pending" until it is collected later.
@@ -5,12 +7,12 @@ export class DayEntry {
   constructor(data = {}) {
     this.id = data.id || crypto.randomUUID();
     this.date = data.date || '';              // YYYY-MM-DD (local date the work belongs to)
-    this.service = data.service || 'Other';   // Car wash, Puncture, Air, ...
+    this.service = asText(data.service, 'Other');   // Car wash, Puncture, Air, ...
     this.amount = Number(data.amount) || 0;
     this.direction = data.direction === 'out' ? 'out' : 'in';   // in = received, out = paid out
     this.group = data.group || '';            // entries made together (a cash/online exchange) share this id
-    this.subject = data.subject || '';        // free text; the list of subjects will be added later
-    this.note = data.note || '';
+    this.subject = asText(data.subject);        // free text; the list of subjects will be added later
+    this.note = asText(data.note);
     this.createdAt = data.createdAt || new Date().toISOString();
     if (Array.isArray(data.receipts)) {
       this.receipts = data.receipts.map(r => ({

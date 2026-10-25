@@ -3,6 +3,7 @@ import { Bill, BillItem } from '../models/Bill';
 import { Payment } from '../models/Payment';
 import { Party } from '../models/Party';
 import { DayEntry } from '../models/DayEntry';
+import { asText } from '../models/asText';
 
 // Firebase sync helper (lazy loaded)
 let _pushDoc = null;
@@ -129,7 +130,7 @@ export const TyreService = {
   // (stock 0) so a bill item always points at a real inventory record. Pass create=false to get
   // an unsaved tyre instead (used for estimates, which shouldn't add to inventory).
   findOrCreate({ brand = '', model = '', size = '', type = 'tubeless', costPrice = 0, sellingPrice = 0 }, create = true) {
-    const norm = s => (s || '').trim().toLowerCase();
+    const norm = s => asText(s).toLowerCase();
     const found = this.getAll().find(t =>
       norm(t.brand) === norm(brand) &&
       norm(t.size) === norm(size) &&
@@ -141,12 +142,12 @@ export const TyreService = {
   },
 
   search(query) {
-    const q = query.toLowerCase();
+    const q = asText(query).toLowerCase();
     return this.getAll().filter(t =>
-      t.brand.toLowerCase().includes(q) ||
-      t.model.toLowerCase().includes(q) ||
-      t.size.toLowerCase().includes(q) ||
-      t.type.toLowerCase().includes(q)
+      asText(t.brand).toLowerCase().includes(q) ||
+      asText(t.model).toLowerCase().includes(q) ||
+      asText(t.size).toLowerCase().includes(q) ||
+      asText(t.type).toLowerCase().includes(q)
     );
   },
 
@@ -195,10 +196,10 @@ export const PartyService = {
   },
 
   search(query) {
-    const q = query.toLowerCase();
+    const q = asText(query).toLowerCase();
     return this.getAll().filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.phone.includes(q)
+      asText(p.name).toLowerCase().includes(q) ||
+      asText(p.phone).includes(q)
     );
   },
 
@@ -210,7 +211,7 @@ export const PartyService = {
 // OCR can misread a header row or a table as an item. Only lines that look like a real tyre line
 // add tyres to inventory automatically; the rest still go on the bill but don't touch stock.
 function looksLikeRealItem(item) {
-  const brand = (item.brand || '').trim();
+  const brand = asText(item.brand);
   return /^[A-Za-z][A-Za-z0-9 \-]{0,29}$/.test(brand) &&
     brand.toLowerCase() !== 'unknown' &&
     Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 500 &&
@@ -232,6 +233,8 @@ export const BillService = {
     if (!bill.billNumber) {
       bill.billNumber = generateBillNumber();
     }
+    // The invoice number is automatic too (same as the bill number) unless one was typed, e.g. a dealer's
+    if (!bill.invoiceNo) bill.invoiceNo = bill.billNumber;
     bill.recalculate();
     const bills = load(KEYS.bills);
     const idx = bills.findIndex(b => b.id === bill.id);
@@ -258,6 +261,11 @@ export const BillService = {
     getFirebaseSync().then(({ del }) => {
       if (del) del('bills', id);
     });
+  },
+
+  // The number the next new bill will get (shown on the form; the real one is fixed when the bill is saved)
+  nextNumber() {
+    return generateBillNumber();
   },
 
   getByType(type) {
