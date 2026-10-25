@@ -373,3 +373,7 @@ textarea { min-height: 96px; resize: vertical; }
 .job-foot { background: var(--surface-soft); font-weight: 700; color: var(--ink); border-bottom: none; }
 .card .statement-table { overflow-x: auto; }
 .bar-num { font-size: 11px; font-weight: 700; color: var(--ink); height: 16px; }
+
+/* number boxes: no up/down arrows */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

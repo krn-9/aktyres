@@ -10,7 +10,9 @@ const SUBJECT_OPTIONS = [];
 
 const money = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const EMPTY_FORM = { picked: ['Car wash'], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '' };
+// Nothing is selected until the user taps a service. EXCHANGE is the last option: cash for online / online for cash.
+const EXCHANGE = 'Exchange';
+const EMPTY_FORM = { picked: [], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '', exFrom: 'online', exFee: '' };
 
 // The shop's daily book: cash in the counter, work done, how each payment arrived, what is pending,
 // plus week / month / year reports and a per-service report
@@ -42,13 +44,15 @@ export default function DayBook({ navigate }) {
   const day = DayBookService.getDay(date);
   const period = view === 'day' ? null : DayBookService.getPeriodSummary(start, end, filter);
   const allTxns = view === 'day' ? DayBookService.getTransactions(date) : period.txns;
-  const txns = view === 'day' && filter.length ? allTxns.filter(t => filter.includes(t.service)) : allTxns;
+  // latest first (also the order used in the PDF)
+  const txns = (view === 'day' && filter.length ? allTxns.filter(t => filter.includes(t.service)) : allTxns)
+    .slice().sort((a, b) => new Date(b.time) - new Date(a.time));
   const pendingEntries = DayBookService.pendingEntries();
   const bills = DayBookService.billBalances();
   const pendingTotal = pendingEntries.reduce((n, e) => n + e.pending, 0);
   const confirmed = DayBookService.confirmations();   // online payments matched with a phone notification
   const customServices = DayBookService.getServices();
-  const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];
+  const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];   // the Exchange chip is added after these
   const knownServices = [...new Set([...PRESET_SERVICES, ...customServices, ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
   const formTotal = form.picked.reduce((n, name) => n + (parseFloat(form.amounts[name]) || 0), 0);
   const subjectSuggestions = [...new Set([...SUBJECT_OPTIONS, ...DayBookService.getEntries().map(e => e.subject).filter(Boolean)])];
@@ -57,12 +61,21 @@ export default function DayBook({ navigate }) {
   // Several services can be picked at once; each gets its own amount and becomes its own entry
   const pickService = (name) => setForm(f => {
     if (editingId) return { ...f, picked: [name] };
+    if (name === EXCHANGE) return { ...f, picked: f.picked.includes(EXCHANGE) ? [] : [EXCHANGE] };
+    if (f.picked.includes(EXCHANGE)) return { ...f, picked: [name] };
     return { ...f, picked: f.picked.includes(name) ? f.picked.filter(x => x !== name) : [...f.picked, name] };
   });
   const setAmount = (name, value) => setForm(f => ({ ...f, amounts: { ...f.amounts, [name]: value } }));
 
   const submitEntry = (e) => {
     e.preventDefault();
+    if (form.picked.includes(EXCHANGE)) {
+      const amt = parseFloat(form.amounts[EXCHANGE]);
+      if (!(amt > 0)) { alert('Enter the amount'); return; }
+      DayBookService.addExchange({ date, from: form.exFrom, amount: amt, fee: parseFloat(form.exFee) || 0, subject: form.subject.trim(), note: form.note.trim() });
+      setForm(EMPTY_FORM);
+      return;
+    }
     const lines = form.picked.map(name => ({
       name: name === 'Other' ? (form.custom.trim() || 'Other') : name,
       amount: parseFloat(form.amounts[name]),
@@ -93,6 +106,7 @@ export default function DayBook({ navigate }) {
       picked: [key], amounts: { [key]: String(entry.amount) }, custom: known ? '' : entry.service,
       full: entry.pending === 0, received: String(entry.received),
       mode: entry.receipts[0]?.mode || 'cash', direction: entry.direction, subject: entry.subject, note: entry.note,
+      exFrom: 'online', exFee: '',
     });
     if (view !== 'day') changeView('day');
     changeDate(entry.date);
@@ -212,7 +226,7 @@ export default function DayBook({ navigate }) {
                 )}
                 {t.label}
                 {t.source === 'bill' && <button className="link" onClick={() => navigate(`/bills/${t.billId}`)}>view bill</button>}
-                {t.source === 'manual' && <button className="link" onClick={() => startEdit(t.entryId)}>edit</button>}
+                {t.source === 'manual' && !t.group && <button className="link" onClick={() => startEdit(t.entryId)}>edit</button>}
                 {t.source === 'manual' && t.pendingLeft > 0 && <span className="pill warn">₹{t.pendingLeft.toLocaleString('en-IN')} pending</span>}
                 {t.source === 'phone' && <button className="link" onClick={() => prefillFromPayment(t.phoneId)}>add details</button>}
                 {/* Only a green mark when the phone notification arrived; nothing is shown while it hasn't */}
@@ -247,7 +261,7 @@ export default function DayBook({ navigate }) {
     const p = confirmed.unmatched.find(x => x.id === phoneId);
     if (!p) return;
     setEditingId(null);
-    setForm({ ...EMPTY_FORM, picked: ['Car wash'], amounts: { 'Car wash': String(p.amount) }, mode: 'online', note: p.ref ? `UPI ${p.ref}` : '' });
+    setForm({ ...EMPTY_FORM, picked: ['Other'], amounts: { Other: String(p.amount) }, mode: 'online', note: p.ref ? `UPI ${p.ref}` : '' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -330,9 +344,36 @@ export default function DayBook({ navigate }) {
                 {formServices.map(s => (
                   <button type="button" key={s} className={`chip ${form.picked.includes(s) ? 'active' : ''}`} onClick={() => pickService(s)}>{s}</button>
                 ))}
+                {!editingId && (
+                  <button type="button" className={`chip ${form.picked.includes(EXCHANGE) ? 'active' : ''}`} onClick={() => pickService(EXCHANGE)}>Cash ⇄ Online</button>
+                )}
                 <button type="button" className="chip ghost" onClick={addServiceName}>+ Add service</button>
               </div>
-              {!editingId && <div className="hint" style={{ marginTop: -6, marginBottom: 10 }}>Tap more than one if the customer took several services.</div>}
+              {!editingId && !form.picked.includes(EXCHANGE) && <div className="hint" style={{ marginTop: -6, marginBottom: 10 }}>Tap more than one if the customer took several services.</div>}
+              {form.picked.includes(EXCHANGE) ? (
+                <>
+                  <div className="segmented" role="group" aria-label="Exchange direction" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+                    <button type="button" className={form.exFrom === 'online' ? 'active' : ''} onClick={() => setField({ exFrom: 'online' })}>Online → Cash</button>
+                    <button type="button" className={form.exFrom === 'cash' ? 'active' : ''} onClick={() => setField({ exFrom: 'cash' })}>Cash → Online</button>
+                  </div>
+                  <div className="hint" style={{ marginBottom: 12 }}>
+                    {form.exFrom === 'online'
+                      ? 'The customer pays you online and you give them the same amount in cash.'
+                      : 'The customer gives you cash and you send them the same amount online.'}
+                  </div>
+                  <div className="form-row">
+                    <label>Amount handed over (₹)</label>
+                    <input type="number" inputMode="decimal" min="0" value={form.amounts[EXCHANGE] || ''} onChange={e => setAmount(EXCHANGE, e.target.value)} placeholder="1000" />
+                  </div>
+                  <div className="form-row">
+                    <label>Your fee (₹, optional)</label>
+                    <input type="number" inputMode="decimal" min="0" value={form.exFee} onChange={e => setField({ exFee: e.target.value })} placeholder="0" />
+                  </div>
+                  <div className="kv"><span>{form.exFrom === 'online' ? 'Online comes in' : 'Cash comes in'}</span><strong>{money((parseFloat(form.amounts[EXCHANGE]) || 0) + (parseFloat(form.exFee) || 0))}</strong></div>
+                  <div className="kv"><span>{form.exFrom === 'online' ? 'Cash goes out' : 'Online goes out'}</span><strong>{money(parseFloat(form.amounts[EXCHANGE]) || 0)}</strong></div>
+                </>
+              ) : (
+                <>
               {form.picked.includes('Other') && (
                 <div className="form-row">
                   <label>What was it?</label>
@@ -367,6 +408,8 @@ export default function DayBook({ navigate }) {
                   <button type="button" className={form.direction === 'out' ? 'active out' : ''} onClick={() => setField({ direction: 'out' })}>Paid out</button>
                 </div>
               </div>
+                </>
+              )}
               <div className="form-row">
                 <label>Subject (optional)</label>
                 <input list="subject-list" value={form.subject} onChange={e => setField({ subject: e.target.value })} placeholder="Subject list will be added later" />

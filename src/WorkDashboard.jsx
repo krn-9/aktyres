@@ -22,7 +22,8 @@ export default function WorkDashboard({ navigate }) {
   const [start, end] = periodRange(view, date);
   const report = DayBookService.getWorkReport(start, end);
   const isCurrent = date === DayBookService.today();
-  const chosenJobs = selected ? report.jobs.filter(j => j.service === selected) : [];
+  // latest first
+  const chosenJobs = selected ? report.jobs.filter(j => j.service === selected).slice().sort((a, b) => new Date(b.time) - new Date(a.time)) : [];
   const chosenRow = selected ? report.rows.find(r => r.service === selected) : null;
 
   const changeView = (next) => { setView(next); setSelected(null); };

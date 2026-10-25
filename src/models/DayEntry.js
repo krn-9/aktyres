@@ -8,6 +8,7 @@ export class DayEntry {
     this.service = data.service || 'Other';   // Car wash, Puncture, Air, ...
     this.amount = Number(data.amount) || 0;
     this.direction = data.direction === 'out' ? 'out' : 'in';   // in = received, out = paid out
+    this.group = data.group || '';            // entries made together (a cash/online exchange) share this id
     this.subject = data.subject || '';        // free text; the list of subjects will be added later
     this.note = data.note || '';
     this.createdAt = data.createdAt || new Date().toISOString();

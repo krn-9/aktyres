@@ -590,10 +590,10 @@ export const DayBookService = {
     const amount = Number(data.amount) || 0;
     const received = data.received === undefined || data.received === null
       ? amount : Math.min(Math.max(Number(data.received) || 0, 0), amount);
-    const createdAt = new Date().toISOString();
+    const createdAt = data.createdAt || new Date().toISOString();
     return this._writeEntry(new DayEntry({
       date: data.date, service: data.service, amount, direction: data.direction,
-      subject: data.subject, note: data.note, createdAt,
+      subject: data.subject, note: data.note, group: data.group, createdAt,
       receipts: received > 0
         ? [{ id: crypto.randomUUID(), date: data.date, amount: received, mode: data.mode, time: createdAt }]
         : [],
@@ -604,7 +604,7 @@ export const DayBookService = {
   // later collections are separate receipts and stay as they are.
   updateEntry(id, patch) {
     const found = load(KEYS.dayEntries).find(e => e.id === id);
-    if (!found) return null;
+    if (!found || found.group) return null;   // exchanges are removed and re-entered, not edited
     const e = new DayEntry(found);
     const oldDate = e.date;
     for (const key of ['service', 'direction', 'subject', 'note']) {
@@ -638,9 +638,33 @@ export const DayBookService = {
     return this._writeEntry(e);
   },
 
+  // Removing one part of an exchange removes all of it, so the books never end up half-recorded
   deleteEntry(id) {
-    save(KEYS.dayEntries, load(KEYS.dayEntries).filter(e => e.id !== id));
-    getFirebaseSync().then(({ del }) => { if (del) del('dayEntries', id); });
+    const all = load(KEYS.dayEntries);
+    const target = all.find(e => e.id === id);
+    if (!target) return;
+    const ids = target.group ? all.filter(e => e.group === target.group).map(e => e.id) : [id];
+    save(KEYS.dayEntries, all.filter(e => !ids.includes(e.id)));
+    getFirebaseSync().then(({ del }) => { if (del) ids.forEach(x => del('dayEntries', x)); });
+  },
+
+  // Cash for online / online for cash: the customer pays in one mode and the shop hands over the same
+  // amount in the other. from = 'online' (customer pays online, shop gives cash) or 'cash' (customer
+  // gives cash, shop sends online). The optional fee is kept by the shop, paid in the customer's mode.
+  addExchange({ date, from, amount, fee, subject, note }) {
+    const amt = Number(amount) || 0;
+    const feeAmt = Math.max(Number(fee) || 0, 0);
+    if (!(amt > 0)) return [];
+    const mine = from === 'cash' ? 'cash' : 'online';
+    const other = mine === 'cash' ? 'online' : 'cash';
+    const group = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    const label = mine === 'online' ? 'Exchange: Online → Cash' : 'Exchange: Cash → Online';
+    const leg = (service, direction, mode, value) =>
+      this.addEntry({ date, service, amount: value, received: value, mode, direction, subject, note, group, createdAt });
+    const made = [leg(label, 'in', mine, amt), leg(label, 'out', other, amt)];
+    if (feeAmt > 0) made.push(leg('Exchange fee', 'in', mine, feeAmt));
+    return made;
   },
 
   // Services added by the shop (shown next to the built-in ones)
@@ -708,7 +732,7 @@ export const DayBookService = {
         out.push({
           id: r.id, entryId: e.id, date: r.date, time: r.time, service: e.service, label: e.service,
           subject: e.subject, note: e.note, amount: r.amount, mode: r.mode, direction: e.direction,
-          source: 'manual', total: e.amount, pendingLeft: e.pending,
+          source: 'manual', total: e.amount, pendingLeft: e.pending, group: e.group,
         });
       }
     }
@@ -831,6 +855,7 @@ export const DayBookService = {
     };
     for (const e of this.getEntries()) {
       if (e.direction === 'out' || e.date < startKey || e.date > endKey) continue;
+      if (e.group && e.service.startsWith('Exchange:')) continue;   // moving money between cash and online is not work
       add(e.service, {
         source: 'manual', entryId: e.id, date: e.date, time: e.createdAt, subject: e.subject, note: e.note,
         amount: e.amount, pending: e.pending,
