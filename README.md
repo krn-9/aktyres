@@ -464,12 +464,24 @@ The home page is the shop's daily book: cash in the counter, online received, an
 The Dashboard menu item (between Day Book and Overview) shows how many jobs of each service were done today, this week, this month or this year, with their value and how they were paid (cash, online, pending). Tap a service to see the jobs behind the number; Download Excel exports the same data. Jobs are hand-entered Day Book entries (not expenses), sale bills, and online payments from the phone that have no service yet. Code: `src/WorkDashboard.jsx`, `DayBookService.getWorkReport`.
 
 ## Online payment confirmation (PhonePe / PayZapp)
-Online entries in the Day Book turn green with **✓ Received** when a payment notification for the same amount arrives. Until then (or if it never arrives) nothing extra is shown.
-- The counter phone forwards each "payment received" notification (free automation app, e.g. MacroDroid) to `POST /api/incoming?app=phonepe` (Vercel function `api/incoming.js`, body = notification text).
-- `src/services/paymentParser.js` reads the amount and UPI reference; settlements, debits, refunds and failures are ignored.
-- Matching (`DayBookService.confirmations`): same amount, notification within 6 hours of the entry, closest first, one notification confirms one payment. Nothing is stored for the match.
-- Optional: set the `INCOMING_KEY` environment variable in Vercel and add `&key=...` to the phone's URL so only your phone can post.
-- Every payment that arrives on the phone becomes a green "Online payment" row in the Day Book by itself and counts as online money received. If someone also enters it (same amount, same few hours), the entry replaces that row and the payment is not counted twice. "add details" on the row pre-fills an entry so a service can be chosen.
+A green **✓ Received** appears on an online payment the moment the phone gets the "payment received" notification (a few seconds). Nothing is shown while it has not arrived.
+
+**How it works**
+1. The **Payment Reader** Android app (`reader-android/`) runs on the counter phone. With "Notification access" switched on, it reads notifications only from apps whose package name contains `phonepe`, `payzapp` or `wibmo`. Settlements, debits, refunds and failures are ignored locally.
+2. For a payment received it sends the text over HTTPS, with a secret key, to `POST /api/incoming` (`api/incoming.js`, a Vercel function).
+3. The function checks the key, reads the amount and UPI reference, and stores **only** amount, reference, app and time (never the text or the payer's name) in `incomingPayments`. A retry cannot make a second payment (each notification has a unique id).
+4. The Day Book listens to that collection live. A payment with a matching online entry (same amount, within 6 hours either way; that is only the matching window, not a delay) turns that entry green; a payment nobody has entered yet appears as its own green "Online payment" row and counts in the online total. When the shop enters it, the entry replaces the row (never counted twice).
+
+**Safe by design**
+- The app has one permission (internet), no libraries, no backup, HTTPS only, does not follow redirects, and keeps its key in private app storage.
+- The website refuses everything until `INCOMING_KEY` is set in Vercel, compares it in constant time, accepts it only in a header, caps the amount, and ignores anything that is not a payment received.
+- Optional hardening: set `FIREBASE_SERVICE_ACCOUNT` in Vercel and publish `firestore.open.rules` so that only the server can write `incomingPayments` (otherwise anyone who knows the database could write fake ones).
+
+**Setup**
+1. Vercel -> Settings -> Environment Variables: add `INCOMING_KEY` (a long random secret), then Redeploy.
+2. Add `reader-android/build-reader.workflow.yml` to the repo as `.github/workflows/build-reader.yml` (GitHub website: Add file -> Create new file). GitHub builds the app in its cloud; the finished file is at Releases -> "Payment Reader (latest)" -> `payment-reader.apk`.
+3. On the counter phone: download and install it (allow installs from your browser), open it, then follow its screen: allow notification access (on newer Android first App info -> menu -> "Allow restricted settings"), allow background running, enter the website address and the same secret key, Save, then "Send a test".
+4. Updating the app later: uninstall the old one first (each cloud build is signed with a new key), then install the new file and enter the settings again.
 
 ## Bills: GST and payment
 - Bills are created under Bills (Sale / Purchase). The chatbot was removed.

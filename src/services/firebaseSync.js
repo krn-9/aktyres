@@ -8,6 +8,9 @@ const COLLECTIONS = ['tyres', 'bills', 'payments', 'parties', 'dayEntries', 'day
 const PENDING_KEY = 'tyre_shop_pending';
 const SEEDED_KEY = 'tyre_shop_seeded_v1';
 const FLUSH_TIMEOUT_MS = 5000;
+// Written only by the server (payment notifications from the counter phone). This device never writes them,
+// so unsent data of other kinds must not hold their updates back: they show the moment they arrive.
+const READ_ONLY = ['incomingPayments'];
 
 // Set when a pull/snapshot was skipped because this device still had unsent data
 let repullNeeded = false;
@@ -89,7 +92,7 @@ function readLocal(coll) {
 }
 
 function hasLocalData() {
-  return COLLECTIONS.some(coll => readLocal(coll).length > 0);
+  return COLLECTIONS.some(coll => !READ_ONLY.includes(coll) && readLocal(coll).length > 0);
 }
 
 function isSeeded() {
@@ -191,6 +194,7 @@ async function seedLocalOnly() {
   try {
     const { collection, getDocsFromServer } = await import('firebase/firestore');
     for (const coll of COLLECTIONS) {
+      if (READ_ONLY.includes(coll)) continue;   // never uploaded from a device
       const snapshot = await getDocsFromServer(collection(db, coll));
       const remoteIds = new Set(snapshot.docs.map(d => d.id));
       for (const item of readLocal(coll)) {
@@ -243,7 +247,7 @@ export async function pullCollection(collectionName) {
     const snapshot = await getDocsFromServer(collection(db, collectionName));
     if (startedAt !== epoch) return null; // signed out while this was in flight
     // Data this device hasn't uploaded yet is newer than the server copy
-    if (hasPendingWrites() || !isSeeded()) { repullNeeded = true; return null; }
+    if (!READ_ONLY.includes(collectionName) && (hasPendingWrites() || !isSeeded())) { repullNeeded = true; return null; }
     const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const storageKey = `tyre_shop_${collectionName}`;
     localStorage.setItem(storageKey, JSON.stringify(items));
@@ -278,7 +282,7 @@ export function listenCollection(collectionName, callback) {
       // A cache-only snapshot (e.g. app opened offline) can be empty or stale, and data this
       // device hasn't uploaded isn't on the server yet. Don't overwrite local data in either case.
       if (snapshot.metadata.fromCache) return;
-      if (hasPendingWrites() || !isSeeded()) { repullNeeded = true; return; }
+      if (!READ_ONLY.includes(collectionName) && (hasPendingWrites() || !isSeeded())) { repullNeeded = true; return; }
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const storageKey = `tyre_shop_${collectionName}`;
       localStorage.setItem(storageKey, JSON.stringify(items));
