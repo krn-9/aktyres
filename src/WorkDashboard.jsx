@@ -10,6 +10,7 @@ const VIEWS = [['day', 'Today'], ['week', 'Week'], ['month', 'Month'], ['year', 
 export default function WorkDashboard({ navigate }) {
   const [view, setView] = useState('day');
   const [date, setDate] = useState(DayBookService.today());
+  const [followToday, setFollowToday] = useState(true);   // moves on to the new day by itself after midnight
   const [selected, setSelected] = useState(null);   // service whose jobs are listed below
   const [, refresh] = useState(0);
 
@@ -27,7 +28,22 @@ export default function WorkDashboard({ navigate }) {
   const chosenRow = selected ? report.rows.find(r => r.service === selected) : null;
 
   const changeView = (next) => { setView(next); setSelected(null); };
-  const changeDate = (next) => { setDate(next); setSelected(null); };
+  const changeDate = (next) => { setDate(next); setSelected(null); setFollowToday(next === DayBookService.today()); };
+
+  useEffect(() => {
+    const rollOver = () => {
+      const t = DayBookService.today();
+      if (followToday && t !== date) { setDate(t); setSelected(null); }
+    };
+    const timer = setInterval(rollOver, 30000);
+    document.addEventListener('visibilitychange', rollOver);
+    window.addEventListener('focus', rollOver);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', rollOver);
+      window.removeEventListener('focus', rollOver);
+    };
+  }, [followToday, date]);
 
   const exportExcel = async () => {
     try {

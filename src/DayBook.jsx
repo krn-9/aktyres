@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { DayBookService, SettingsService } from './services/dataService';
+import { DayBookService, SettingsService, BIN_DAYS } from './services/dataService';
 import { buildDayBookPdf } from './exportPdf';
 import { parseKey, shiftDate, periodRange, shiftPeriod, periodLabel } from './periods';
 
@@ -12,19 +12,26 @@ const money = (n) => `₹${(Number(n) || 0).toLocaleString('en-IN')}`;
 const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 // Nothing is selected until the user taps a service. EXCHANGE is the last option: cash for online / online for cash.
 const EXCHANGE = 'Exchange';
-const EMPTY_FORM = { picked: [], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '', exFrom: 'online', exFee: '' };
+const EMPTY_FORM = { picked: [], amounts: {}, custom: '', full: true, received: '', mode: 'cash', direction: 'in', subject: '', note: '', exFrom: 'online', exFee: '', date: '' };
 
 // The shop's daily book: cash in the counter, work done, how each payment arrived, what is pending,
 // plus week / month / year reports and a per-service report
 export default function DayBook({ navigate }) {
   const [view, setView] = useState('day');            // day | week | month | year
   const [date, setDate] = useState(DayBookService.today());
+  // While the page is showing "today" it keeps following the real date, so a page left open past
+  // midnight moves on to the new day by itself (entries used to be filed under yesterday).
+  const [followToday, setFollowToday] = useState(true);
+  const [showBin, setShowBin] = useState(false);
   const [, refresh] = useState(0);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
   const [filter, setFilter] = useState([]);           // selected services (empty = all)
   const [picked, setPicked] = useState([]);           // entry ids ticked for bulk delete
   const [homeInput, setHomeInput] = useState(null);   // null = show the saved value
+
+  // Entries that have been in the bin longer than BIN_DAYS are removed for good
+  useEffect(() => { DayBookService.purgeBin(); }, []);
 
   // Re-render when entries, bills or payments change (including changes arriving from other devices)
   useEffect(() => {
@@ -33,7 +40,25 @@ export default function DayBook({ navigate }) {
     return () => window.removeEventListener('dataChanged', handler);
   }, []);
 
-  const changeDate = (next) => { setDate(next); setHomeInput(null); setPicked([]); };
+  const changeDate = (next) => {
+    setDate(next); setHomeInput(null); setPicked([]);
+    setFollowToday(next === DayBookService.today());
+  };
+
+  useEffect(() => {
+    const rollOver = () => {
+      const t = DayBookService.today();
+      if (followToday && t !== date) { setDate(t); setHomeInput(null); setPicked([]); }
+    };
+    const timer = setInterval(rollOver, 30000);
+    document.addEventListener('visibilitychange', rollOver);
+    window.addEventListener('focus', rollOver);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', rollOver);
+      window.removeEventListener('focus', rollOver);
+    };
+  }, [followToday, date]);
   const changeView = (next) => { setView(next); setPicked([]); };
   const setField = (patch) => setForm(f => ({ ...f, ...patch }));
   const toggleService = (name) => setFilter(f => (f.includes(name) ? f.filter(x => x !== name) : [...f, name]));
@@ -50,7 +75,6 @@ export default function DayBook({ navigate }) {
   const pendingEntries = DayBookService.pendingEntries();
   const bills = DayBookService.billBalances();
   const pendingTotal = pendingEntries.reduce((n, e) => n + e.pending, 0);
-  const confirmed = DayBookService.confirmations();   // online payments matched with a phone notification
   const customServices = DayBookService.getServices();
   const formServices = [...PRESET_SERVICES, ...customServices, 'Other'];   // the Exchange chip is added after these
   const knownServices = [...new Set([...PRESET_SERVICES, ...customServices, ...DayBookService.allTransactions().map(t => t.service), ...pendingEntries.map(e => e.service)])];
@@ -72,7 +96,7 @@ export default function DayBook({ navigate }) {
     if (form.picked.includes(EXCHANGE)) {
       const amt = parseFloat(form.amounts[EXCHANGE]);
       if (!(amt > 0)) { alert('Enter the amount'); return; }
-      DayBookService.addExchange({ date, from: form.exFrom, amount: amt, fee: parseFloat(form.exFee) || 0, subject: form.subject.trim(), note: form.note.trim() });
+      DayBookService.addExchange({ date: followToday ? DayBookService.today() : date, from: form.exFrom, amount: amt, fee: parseFloat(form.exFee) || 0, subject: form.subject.trim(), note: form.note.trim() });
       setForm(EMPTY_FORM);
       return;
     }
@@ -89,8 +113,8 @@ export default function DayBook({ navigate }) {
       const got = Math.min(left, l.amount);   // money received is used up service by service, in order
       left -= got;
       const data = { service: l.name, amount: l.amount, received: got, mode: form.mode, direction: form.direction, subject: form.subject.trim(), note: form.note.trim() };
-      if (editingId) DayBookService.updateEntry(editingId, data);
-      else DayBookService.addEntry({ ...data, date });
+      if (editingId) DayBookService.updateEntry(editingId, { ...data, date: form.date || undefined });
+      else DayBookService.addEntry({ ...data, date: followToday ? DayBookService.today() : date });
     }
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -106,7 +130,7 @@ export default function DayBook({ navigate }) {
       picked: [key], amounts: { [key]: String(entry.amount) }, custom: known ? '' : entry.service,
       full: entry.pending === 0, received: String(entry.received),
       mode: entry.receipts[0]?.mode || 'cash', direction: entry.direction, subject: entry.subject, note: entry.note,
-      exFrom: 'online', exFee: '',
+      exFrom: 'online', exFee: '', date: entry.date,
     });
     if (view !== 'day') changeView('day');
     changeDate(entry.date);
@@ -116,11 +140,11 @@ export default function DayBook({ navigate }) {
   const cancelEdit = () => { setEditingId(null); setForm(EMPTY_FORM); };
 
   const removeEntry = (id) => {
-    if (confirm('Remove this entry?')) { DayBookService.deleteEntry(id); setPicked(p => p.filter(x => x !== id)); }
+    if (confirm(`Remove this entry? It stays in "Recently deleted" for ${BIN_DAYS} days, so it can be restored.`)) { DayBookService.deleteEntry(id); setPicked(p => p.filter(x => x !== id)); }
   };
 
   const removePicked = () => {
-    if (picked.length && confirm(`Remove ${picked.length} selected ${picked.length === 1 ? 'entry' : 'entries'}?`)) {
+    if (picked.length && confirm(`Remove ${picked.length} selected ${picked.length === 1 ? 'entry' : 'entries'}? They stay in "Recently deleted" for ${BIN_DAYS} days.`)) {
       DayBookService.deleteEntries(picked);
       setPicked([]);
     }
@@ -169,7 +193,7 @@ export default function DayBook({ navigate }) {
         title: 'Day Book',
         subtitle: periodLabel(view, date),
         filterLabel: filter.length ? `Only: ${filter.join(', ')}` : '',
-        txns, confirmed, showDate: view !== 'day',
+        txns, showDate: view !== 'day',
         cashTotal: net('cash'), onlineTotal: net('online'),
         serviceRows: DayBookService.exportServiceRows(report),
       });
@@ -218,7 +242,7 @@ export default function DayBook({ navigate }) {
           <div className="st-online">Online<br /><strong>{money(view === 'day' ? summary.onlineNet : period.onlineNet)}</strong></div>
         </div>
         {txns.map(t => (
-          <div className={`st-row ${t.mode === 'online' && t.direction === 'in' && (t.source === 'phone' || confirmed.byTxn[t.id]) ? 'confirmed' : ''}`} role="row" key={t.id}>
+          <div className="st-row" role="row" key={t.id}>
             <div className="st-details">
               <div className="st-title">
                 {t.source === 'manual' && (
@@ -228,11 +252,6 @@ export default function DayBook({ navigate }) {
                 {t.source === 'bill' && <button className="link" onClick={() => navigate(`/bills/${t.billId}`)}>view bill</button>}
                 {t.source === 'manual' && !t.group && <button className="link" onClick={() => startEdit(t.entryId)}>edit</button>}
                 {t.source === 'manual' && t.pendingLeft > 0 && <span className="pill warn">₹{t.pendingLeft.toLocaleString('en-IN')} pending</span>}
-                {t.source === 'phone' && <button className="link" onClick={() => prefillFromPayment(t.phoneId)}>add details</button>}
-                {/* Only a green mark when the phone notification arrived; nothing is shown while it hasn't */}
-                {t.mode === 'online' && t.direction === 'in' && (t.source === 'phone' || confirmed.byTxn[t.id]) && (
-                  <span className="pill ok" title={(t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref) ? `UPI ref ${t.source === 'phone' ? t.ref : confirmed.byTxn[t.id].ref}` : 'Payment notification received'}>{t.source === 'phone' ? '✓ Received on phone' : '✓ Received'}</span>
-                )}
               </div>
               <div className="muted small">
                 {view !== 'day' ? `${parseKey(t.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ` : ''}
@@ -256,14 +275,31 @@ export default function DayBook({ navigate }) {
     </div>
   );
 
-  // Give a payment that arrived on the phone a service, by entering it as a normal Day Book entry
-  const prefillFromPayment = (phoneId) => {
-    const p = confirmed.unmatched.find(x => x.id === phoneId);
-    if (!p) return;
-    setEditingId(null);
-    setForm({ ...EMPTY_FORM, picked: ['Other'], amounts: { Other: String(p.amount) }, mode: 'online', note: p.ref ? `UPI ${p.ref}` : '' });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const bin = DayBookService.getBin();
+  const when = (iso) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const binCard = bin.length > 0 && (
+    <div className="card">
+      <div className="statement-head">
+        <h3>Recently deleted ({bin.length})</h3>
+        <button className="btn-sm" onClick={() => setShowBin(!showBin)}>{showBin ? 'Hide' : 'Show'}</button>
+      </div>
+      <div className="hint">Deleted entries stay here for {BIN_DAYS} days. Restore one to bring it (and its money) back to its day.</div>
+      {showBin && bin.map(e => (
+        <div className="pending-row" key={e.id}>
+          <div>
+            <div className="st-title">{e.service} <span className="muted small">{money(e.amount)} · {e.direction === 'out' ? 'paid out' : 'received'}{e.group ? ' · exchange' : ''}</span></div>
+            <div className="muted small">
+              {parseKey(e.date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}{e.subject ? ` · ${e.subject}` : ''}{e.note ? ` · ${e.note}` : ''} · deleted {when(e.deletedAt)}
+            </div>
+          </div>
+          <div className="actions-row" style={{ marginTop: 0 }}>
+            <button className="btn-sm" onClick={() => DayBookService.restoreEntry(e.id)}>Restore</button>
+            <button className="btn-danger btn-sm" onClick={() => { if (confirm('Delete this for good? It cannot be restored.')) DayBookService.deleteForever(e.id); }}>Delete forever</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   const pendingCard = (pendingEntries.length > 0 || bills.count > 0) && (
     <div className="card">
@@ -410,6 +446,13 @@ export default function DayBook({ navigate }) {
               </div>
                 </>
               )}
+              {editingId && (
+                <div className="form-row">
+                  <label>Date of this entry</label>
+                  <input type="date" value={form.date} onChange={e => setField({ date: e.target.value })} />
+                  <div className="hint">Change it to move the entry to another day (money received on the same day moves with it).</div>
+                </div>
+              )}
               <div className="form-row">
                 <label>Subject (optional)</label>
                 <input list="subject-list" value={form.subject} onChange={e => setField({ subject: e.target.value })} placeholder="Subject list will be added later" />
@@ -455,6 +498,7 @@ export default function DayBook({ navigate }) {
             {serviceChips}
           </div>
           {statement}
+          {binCard}
         </>
       ) : (
         <>
@@ -502,6 +546,7 @@ export default function DayBook({ navigate }) {
 
           {pendingCard}
           {statement}
+          {binCard}
         </>
       )}
     </div>

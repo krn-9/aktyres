@@ -31,7 +31,6 @@ const KEYS = {
   dayEntries: 'tyre_shop_dayEntries',
   days: 'tyre_shop_days',
   config: 'tyre_shop_config',
-  incoming: 'tyre_shop_incomingPayments',
 };
 
 // Generic local storage helpers
@@ -575,12 +574,16 @@ function dateKey(d) {
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
 
+// How long a deleted entry stays in the bin before it is removed for good (never less than 24 hours)
+export const BIN_DAYS = 7;
+
 export const DayBookService = {
   dateKey,
   today() { return dateKey(new Date()); },
 
-  getEntries() {
-    return load(KEYS.dayEntries).map(d => new DayEntry(d));
+  // Entries in the bin (deletedAt set) are left out everywhere unless asked for
+  getEntries(includeDeleted = false) {
+    return load(KEYS.dayEntries).map(d => new DayEntry(d)).filter(e => includeDeleted || !e.deletedAt);
   },
 
   _writeEntry(entry) {
@@ -612,7 +615,7 @@ export const DayBookService = {
   // later collections are separate receipts and stay as they are.
   updateEntry(id, patch) {
     const found = load(KEYS.dayEntries).find(e => e.id === id);
-    if (!found || found.group) return null;   // exchanges are removed and re-entered, not edited
+    if (!found || found.group || found.deletedAt) return null;   // exchanges are removed and re-entered, not edited
     const e = new DayEntry(found);
     const oldDate = e.date;
     for (const key of ['service', 'direction', 'subject', 'note']) {
@@ -646,14 +649,47 @@ export const DayBookService = {
     return this._writeEntry(e);
   },
 
-  // Removing one part of an exchange removes all of it, so the books never end up half-recorded
-  deleteEntry(id) {
-    const all = load(KEYS.dayEntries);
+  // Deleting moves an entry to the bin ("Recently deleted"): it disappears from the books and totals but
+  // can be restored for BIN_DAYS days, then it is removed for good. Removing one part of an exchange
+  // moves all of it, so the books never end up half-recorded.
+  _group(all, id) {
     const target = all.find(e => e.id === id);
-    if (!target) return;
-    const ids = target.group ? all.filter(e => e.group === target.group).map(e => e.id) : [id];
+    if (!target) return [];
+    return target.group ? all.filter(e => e.group === target.group).map(e => e.id) : [id];
+  },
+
+  _setDeleted(id, deletedAt) {
+    const all = load(KEYS.dayEntries);
+    const ids = this._group(all, id);
+    if (ids.length === 0) return;
+    const next = all.map(e => (ids.includes(e.id) ? { ...e, deletedAt } : e));
+    save(KEYS.dayEntries, next);
+    getFirebaseSync().then(({ push }) => {
+      if (push) next.filter(e => ids.includes(e.id)).forEach(e => push('dayEntries', e.id, { ...e }));
+    });
+  },
+
+  deleteEntry(id) { this._setDeleted(id, new Date().toISOString()); },
+
+  restoreEntry(id) { this._setDeleted(id, ''); },
+
+  // Gone for good (from the bin)
+  deleteForever(id) {
+    const all = load(KEYS.dayEntries);
+    const ids = this._group(all, id);
     save(KEYS.dayEntries, all.filter(e => !ids.includes(e.id)));
     getFirebaseSync().then(({ del }) => { if (del) ids.forEach(x => del('dayEntries', x)); });
+  },
+
+  // What is in the bin, newest first
+  getBin() {
+    return this.getEntries(true).filter(e => e.deletedAt).sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+  },
+
+  // Removes bin entries older than BIN_DAYS for good
+  purgeBin() {
+    const limit = Date.now() - BIN_DAYS * 24 * 3600 * 1000;
+    this.getBin().filter(e => new Date(e.deletedAt).getTime() < limit).forEach(e => this.deleteForever(e.id));
   },
 
   // Cash for online / online for cash: the customer pays in one mode and the shop hands over the same
@@ -731,9 +767,7 @@ export const DayBookService = {
 
   // Every rupee that moved: day-book entries + bill payments (sale payments come in,
   // purchase payments go out). Online = anything that is not cash (UPI, bank, cheque).
-  // includePhone: also list payment notifications from the counter phone that nobody has entered yet.
-  // They count as online money received, and disappear (replaced by the real entry) once it is entered.
-  allTransactions(includePhone = true) {
+  allTransactions() {
     const out = [];
     for (const e of this.getEntries()) {
       for (const r of e.receipts) {
@@ -756,16 +790,6 @@ export const DayBookService = {
         amount: p.amount, mode: p.method === 'cash' ? 'cash' : 'online',
         direction: purchase ? 'out' : 'in', source: 'bill', billId: p.billId,
       });
-    }
-    if (includePhone) {
-      for (const p of this.confirmations().unmatched) {
-        out.push({
-          id: `phone-${p.id}`, phoneId: p.id, date: dateKey(p.receivedAt), time: p.receivedAt,
-          service: 'Online payment', label: 'Online payment',
-          subject: '', note: [p.app, p.ref ? `UPI ${p.ref}` : ''].filter(Boolean).join(' · '),
-          amount: p.amount, mode: 'online', direction: 'in', source: 'phone', ref: p.ref, app: p.app,
-        });
-      }
     }
     return out;
   },
@@ -792,7 +816,6 @@ export const DayBookService = {
       const row = byService[t.service] || (byService[t.service] = blank());
       row.count++; row[field] += t.amount;
       if (t.source === 'bill') (billsSeen[t.service] || (billsSeen[t.service] = new Set())).add(t.billId);
-      if (t.source === 'phone') { row.jobs++; row.amount += t.amount; }
       const day = byDay[t.date] || (byDay[t.date] = { cash: 0, online: 0 });
       const signed = t.direction === 'out' ? -t.amount : t.amount;
       day[t.mode === 'cash' ? 'cash' : 'online'] += signed;
@@ -819,37 +842,9 @@ export const DayBookService = {
     };
   },
 
-  // Payment notifications forwarded from the counter phone (see api/incoming.js)
-  getIncoming() {
-    return load(KEYS.incoming).filter(p => p && p.amount > 0)
-      .sort((a, b) => new Date(a.receivedAt) - new Date(b.receivedAt));
-  },
-
-  // Which online payments already have a matching "received" notification. Worked out fresh each time
-  // from the data (nothing is stored): same amount, notification within 6 hours of the entry, closest first.
-  confirmations() {
-    const WINDOW = 6 * 60 * 60 * 1000;
-    const incoming = this.getIncoming();
-    const used = new Set();
-    const byTxn = {};
-    const online = this.allTransactions(false)
-      .filter(t => t.mode === 'online' && t.direction === 'in')
-      .sort((a, b) => new Date(a.time) - new Date(b.time));
-    for (const t of online) {
-      let best = null, bestGap = Infinity;
-      for (const p of incoming) {
-        if (used.has(p.id) || Math.abs(p.amount - t.amount) > 0.005) continue;
-        const gap = Math.abs(new Date(p.receivedAt) - new Date(t.time));
-        if (gap <= WINDOW && gap < bestGap) { best = p; bestGap = gap; }
-      }
-      if (best) { used.add(best.id); byTxn[t.id] = best; }
-    }
-    return { byTxn, unmatched: incoming.filter(p => !used.has(p.id)) };
-  },
-
   // "Work done" for a period (startKey..endKey): how many jobs of each service, what they were worth,
-  // and how it was paid. A job is a hand-entered entry that is not an expense, a sale bill, or an online
-  // payment from the phone that has no service yet. Money is counted on the day of the job.
+  // and how it was paid. A job is a hand-entered entry that is not an expense, or a sale bill.
+  // Money is counted on the day of the job.
   getWorkReport(startKey, endKey) {
     const rows = {};
     const jobs = [];
@@ -883,14 +878,6 @@ export const DayBookService = {
         online: mine.filter(p => p.method !== 'cash').reduce((n, p) => n + p.amount, 0),
       });
     }
-    for (const p of this.confirmations().unmatched) {
-      const d = dateKey(p.receivedAt);
-      if (d < startKey || d > endKey) continue;
-      add('Online payment (service not set)', {
-        source: 'phone', date: d, time: p.receivedAt, subject: '', note: [p.app, p.ref ? `UPI ${p.ref}` : ''].filter(Boolean).join(' · '),
-        amount: p.amount, pending: 0, cash: 0, online: p.amount,
-      });
-    }
     const list = Object.values(rows).sort((a, b) => b.jobs - a.jobs || b.amount - a.amount);
     const totals = list.reduce((t, r) => ({
       jobs: t.jobs + r.jobs, amount: t.amount + r.amount, cash: t.cash + r.cash, online: t.online + r.online, pending: t.pending + r.pending,
@@ -899,8 +886,8 @@ export const DayBookService = {
   },
 
   // Rows for the Excel download: one line per transaction (money out is negative), then totals
-  exportRows(txns, confirmed) {
-    const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)', 'Online payment']];
+  exportRows(txns) {
+    const rows = [['Date', 'Time', 'Details', 'Subject', 'Note', 'Type', 'Mode', 'Cash (₹)', 'Online (₹)', 'Still pending on this entry (₹)']];
     let cash = 0, online = 0;
     for (const t of txns) {
       const v = t.direction === 'out' ? -t.amount : t.amount;
@@ -909,10 +896,9 @@ export const DayBookService = {
         t.date, new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), t.label, t.subject || '', t.note || '',
         t.direction === 'out' ? 'Paid out' : 'Received', t.mode === 'cash' ? 'Cash' : 'Online',
         t.mode === 'cash' ? v : '', t.mode === 'online' ? v : '', t.pendingLeft > 0 ? t.pendingLeft : '',
-        t.mode === 'online' && t.direction === 'in' && confirmed ? (t.source === 'phone' ? 'Received ✓ (from phone)' : confirmed.byTxn[t.id] ? 'Received ✓' : '') : '',
       ]);
     }
-    rows.push(['', '', 'Total', '', '', '', '', cash, online, '', '']);
+    rows.push(['', '', 'Total', '', '', '', '', cash, online, '']);
     return rows;
   },
 

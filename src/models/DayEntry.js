@@ -10,6 +10,7 @@ export class DayEntry {
     this.service = asText(data.service, 'Other');   // Car wash, Puncture, Air, ...
     this.amount = Number(data.amount) || 0;
     this.direction = data.direction === 'out' ? 'out' : 'in';   // in = received, out = paid out
+    this.deletedAt = data.deletedAt || '';    // set when moved to the bin (Recently deleted); '' = in use
     this.group = data.group || '';            // entries made together (a cash/online exchange) share this id
     this.subject = asText(data.subject);        // free text; the list of subjects will be added later
     this.note = asText(data.note);

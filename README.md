@@ -456,32 +456,14 @@ The home page is the shop's daily book: cash in the counter, online received, an
 - Cash taken home is entered at the end of the day (`days` collection). What is left in the counter becomes the next day's starting cash; it can be changed by hand.
 - Several services can be added at once for one customer (each with its own amount). Entries can be part-paid (the rest stays pending until collected) and edited. Services can be added from the page (stored in the `config` collection).
 - **Cash ⇄ Online** (last option in the service list): the customer pays online and the shop gives cash, or the customer gives cash and the shop sends online. It records money in one mode and out in the other (plus an optional fee that is income). The entries are linked; removing one removes all. Not counted as work on the Dashboard (the fee is).
+- **Recently deleted:** removing an entry (or a whole exchange) moves it to a bin shown at the bottom of the Day Book. It disappears from the books and totals, can be restored for 7 days (`BIN_DAYS` in `dataService.js`, never less than 24 hours), then it is removed for good. "Delete forever" empties one early.
+- The page follows the real date: left open past midnight it moves on to the new day by itself (a day picked by hand stays), and new entries are filed under the real day. An entry's date can be changed from its edit form.
 - Nothing is selected when the form opens, number boxes ignore the mouse wheel and arrow keys, and transactions are listed newest first (also in the PDF).
 - Week / Month / Year reports, a per-service report (jobs, cash, online, pending), and a Download PDF button for whatever is on screen (statement, totals and a by-service table; `src/exportPdf.js`).
 - Logic: `DayBookService` in `src/services/dataService.js`; page: `src/DayBook.jsx`.
 
 ## Dashboard (work done)
 The Dashboard menu item (between Day Book and Overview) shows how many jobs of each service were done today, this week, this month or this year, with their value and how they were paid (cash, online, pending). Tap a service to see the jobs behind the number; Download Excel exports the same data. Jobs are hand-entered Day Book entries (not expenses), sale bills, and online payments from the phone that have no service yet. Code: `src/WorkDashboard.jsx`, `DayBookService.getWorkReport`.
-
-## Online payment confirmation (PhonePe / PayZapp)
-A green **✓ Received** appears on an online payment the moment the phone gets the "payment received" notification (a few seconds). Nothing is shown while it has not arrived.
-
-**How it works**
-1. The **Payment Reader** Android app (`reader-android/`) runs on the counter phone. With "Notification access" switched on, it reads notifications only from apps whose package name contains `phonepe`, `payzapp` or `wibmo`. Settlements, debits, refunds and failures are ignored locally.
-2. For a payment received it sends the text over HTTPS, with a secret key, to `POST /api/incoming` (`api/incoming.js`, a Vercel function).
-3. The function checks the key, reads the amount and UPI reference, and stores **only** amount, reference, app and time (never the text or the payer's name) in `incomingPayments`. A retry cannot make a second payment (each notification has a unique id).
-4. The Day Book listens to that collection live. A payment with a matching online entry (same amount, within 6 hours either way; that is only the matching window, not a delay) turns that entry green; a payment nobody has entered yet appears as its own green "Online payment" row and counts in the online total. When the shop enters it, the entry replaces the row (never counted twice).
-
-**Safe by design**
-- The app has one permission (internet), no libraries, no backup, HTTPS only, does not follow redirects, and keeps its key in private app storage.
-- The website refuses everything until `INCOMING_KEY` is set in Vercel, compares it in constant time, accepts it only in a header, caps the amount, and ignores anything that is not a payment received.
-- Optional hardening: set `FIREBASE_SERVICE_ACCOUNT` in Vercel and publish `firestore.open.rules` so that only the server can write `incomingPayments` (otherwise anyone who knows the database could write fake ones).
-
-**Setup**
-1. Vercel -> Settings -> Environment Variables: add `INCOMING_KEY` (a long random secret), then Redeploy.
-2. Add `reader-android/build-reader.workflow.yml` to the repo as `.github/workflows/build-reader.yml` (GitHub website: Add file -> Create new file). GitHub builds the app in its cloud; the finished file is at Releases -> "Payment Reader (latest)" -> `payment-reader.apk`.
-3. On the counter phone: download and install it (allow installs from your browser), open it, then follow its screen: allow notification access (on newer Android first App info -> menu -> "Allow restricted settings"), allow background running, enter the website address and the same secret key, Save, then "Send a test".
-4. Updating the app later: uninstall the old one first (each cloud build is signed with a new key), then install the new file and enter the settings again.
 
 ## Bills: GST and payment
 - Bills are created under Bills (Sale / Purchase). The chatbot was removed.

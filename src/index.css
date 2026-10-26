@@ -315,7 +315,6 @@ textarea { min-height: 96px; resize: vertical; }
 .st-title { font-weight: 700; color: var(--ink); }
 .st-footer { background: var(--surface-soft); border-bottom: none; font-weight: 700; color: var(--ink); }
 .st-footer strong { font-size: 18px; }
-.st-row.confirmed { background: var(--success-soft); }
 .x { position: absolute; right: 0; top: 50%; transform: translateY(-50%); padding: 2px 8px; min-height: 0; font-size: 12px; border: none; background: transparent; color: var(--muted-soft); }
 .x:hover { color: var(--error); background: transparent; border: none; }
 

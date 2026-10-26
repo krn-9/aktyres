@@ -2,7 +2,7 @@
 // The built-in PDF fonts have no rupee sign, so amounts are written as "Rs.".
 const rs = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-export async function buildDayBookPdf({ shopName, title, subtitle, filterLabel, txns, confirmed, showDate, cashTotal, onlineTotal, serviceRows }) {
+export async function buildDayBookPdf({ shopName, title, subtitle, filterLabel, txns, showDate, cashTotal, onlineTotal, serviceRows }) {
   const generatedAt = new Date().toLocaleString();
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -48,7 +48,6 @@ export async function buildDayBookPdf({ shopName, title, subtitle, filterLabel, 
     const when = (showDate ? `${t.date}\n` : '') + new Date(t.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const tags = [];
     if (t.source === 'manual' && t.pendingLeft > 0) tags.push(`${rs(t.pendingLeft)} pending`);
-    if (t.mode === 'online' && t.direction === 'in' && (t.source === 'phone' || (confirmed && confirmed.byTxn[t.id]))) tags.push('Received');
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     const details = doc.splitTextToSize(t.label, cols[1].w - 3);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
